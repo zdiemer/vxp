@@ -1,0 +1,18 @@
+# Build output
+bin/
+obj/
+artifacts/
+*.user
+*.suo
+.vs/
+.idea/
+
+# Local scratch / media dumps
+out/
+*.bin
+*.cue
+*.wav
+*.ppm
+*.png
+*.mp4
+!docs/**/*.png

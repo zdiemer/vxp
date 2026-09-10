@@ -1,0 +1,131 @@
+namespace Vxp;
+
+/// <summary>
+/// A tiny 5x7 bitmap font, enough for the status overlay without pulling in a font
+/// library or shipping asset files.
+/// </summary>
+internal static class BitmapFont
+{
+    /// <summary>Width of a glyph in pixels, excluding the one-pixel gap that follows it.</summary>
+    public const int GlyphWidth = 5;
+
+    /// <summary>Height of a glyph in pixels.</summary>
+    public const int GlyphHeight = 7;
+
+    /// <summary>Horizontal advance per character, including the inter-character gap.</summary>
+    public const int Advance = GlyphWidth + 1;
+
+    // Each glyph is five columns; bit 0 of a column is its top pixel.
+    private static readonly Dictionary<char, byte[]> Glyphs = new()
+    {
+        [' '] = [0x00, 0x00, 0x00, 0x00, 0x00],
+        ['-'] = [0x08, 0x08, 0x08, 0x08, 0x08],
+        ['.'] = [0x00, 0x60, 0x60, 0x00, 0x00],
+        [','] = [0x00, 0x50, 0x30, 0x00, 0x00],
+        [':'] = [0x00, 0x36, 0x36, 0x00, 0x00],
+        ['/'] = [0x20, 0x10, 0x08, 0x04, 0x02],
+        ['('] = [0x00, 0x1C, 0x22, 0x41, 0x00],
+        [')'] = [0x00, 0x41, 0x22, 0x1C, 0x00],
+        ['['] = [0x00, 0x7F, 0x41, 0x41, 0x00],
+        [']'] = [0x00, 0x41, 0x41, 0x7F, 0x00],
+        ['+'] = [0x08, 0x08, 0x3E, 0x08, 0x08],
+        ['>'] = [0x00, 0x41, 0x22, 0x14, 0x08],
+        ['<'] = [0x00, 0x08, 0x14, 0x22, 0x41],
+        ['?'] = [0x02, 0x01, 0x59, 0x09, 0x06],
+        ['!'] = [0x00, 0x00, 0x5F, 0x00, 0x00],
+        ['0'] = [0x3E, 0x51, 0x49, 0x45, 0x3E],
+        ['1'] = [0x00, 0x42, 0x7F, 0x40, 0x00],
+        ['2'] = [0x42, 0x61, 0x51, 0x49, 0x46],
+        ['3'] = [0x21, 0x41, 0x45, 0x4B, 0x31],
+        ['4'] = [0x18, 0x14, 0x12, 0x7F, 0x10],
+        ['5'] = [0x27, 0x45, 0x45, 0x45, 0x39],
+        ['6'] = [0x3C, 0x4A, 0x49, 0x49, 0x30],
+        ['7'] = [0x01, 0x71, 0x09, 0x05, 0x03],
+        ['8'] = [0x36, 0x49, 0x49, 0x49, 0x36],
+        ['9'] = [0x06, 0x49, 0x49, 0x29, 0x1E],
+        ['A'] = [0x7E, 0x11, 0x11, 0x11, 0x7E],
+        ['B'] = [0x7F, 0x49, 0x49, 0x49, 0x36],
+        ['C'] = [0x3E, 0x41, 0x41, 0x41, 0x22],
+        ['D'] = [0x7F, 0x41, 0x41, 0x22, 0x1C],
+        ['E'] = [0x7F, 0x49, 0x49, 0x49, 0x41],
+        ['F'] = [0x7F, 0x09, 0x09, 0x01, 0x01],
+        ['G'] = [0x3E, 0x41, 0x41, 0x51, 0x32],
+        ['H'] = [0x7F, 0x08, 0x08, 0x08, 0x7F],
+        ['I'] = [0x00, 0x41, 0x7F, 0x41, 0x00],
+        ['J'] = [0x20, 0x40, 0x41, 0x3F, 0x01],
+        ['K'] = [0x7F, 0x08, 0x14, 0x22, 0x41],
+        ['L'] = [0x7F, 0x40, 0x40, 0x40, 0x40],
+        ['M'] = [0x7F, 0x02, 0x04, 0x02, 0x7F],
+        ['N'] = [0x7F, 0x04, 0x08, 0x10, 0x7F],
+        ['O'] = [0x3E, 0x41, 0x41, 0x41, 0x3E],
+        ['P'] = [0x7F, 0x09, 0x09, 0x09, 0x06],
+        ['Q'] = [0x3E, 0x41, 0x51, 0x21, 0x5E],
+        ['R'] = [0x7F, 0x09, 0x19, 0x29, 0x46],
+        ['S'] = [0x46, 0x49, 0x49, 0x49, 0x31],
+        ['T'] = [0x01, 0x01, 0x7F, 0x01, 0x01],
+        ['U'] = [0x3F, 0x40, 0x40, 0x40, 0x3F],
+        ['V'] = [0x1F, 0x20, 0x40, 0x20, 0x1F],
+        ['W'] = [0x7F, 0x20, 0x18, 0x20, 0x7F],
+        ['X'] = [0x63, 0x14, 0x08, 0x14, 0x63],
+        ['Y'] = [0x03, 0x04, 0x78, 0x04, 0x03],
+        ['Z'] = [0x61, 0x51, 0x49, 0x45, 0x43],
+    };
+
+    /// <summary>Width in pixels of <paramref name="text"/> at the given <paramref name="scale"/>.</summary>
+    public static int Measure(string text, int scale) => text.Length * Advance * scale;
+
+    /// <summary>
+    /// Draws <paramref name="text"/> into an RGBA buffer. Characters with no glyph are
+    /// drawn as blanks.
+    /// </summary>
+    public static void Draw(
+        Span<byte> rgba, int bufferWidth, int bufferHeight,
+        int x, int y, string text, int scale,
+        byte r, byte g, byte b)
+    {
+        var penX = x;
+
+        foreach (var raw in text)
+        {
+            var ch = char.ToUpperInvariant(raw);
+            if (Glyphs.TryGetValue(ch, out var glyph))
+            {
+                for (var column = 0; column < GlyphWidth; column++)
+                {
+                    var bits = glyph[column];
+                    for (var row = 0; row < GlyphHeight; row++)
+                    {
+                        if ((bits & (1 << row)) == 0) continue;
+                        FillBlock(rgba, bufferWidth, bufferHeight,
+                            penX + column * scale, y + row * scale, scale, r, g, b);
+                    }
+                }
+            }
+
+            penX += Advance * scale;
+        }
+    }
+
+    private static void FillBlock(
+        Span<byte> rgba, int bufferWidth, int bufferHeight,
+        int x, int y, int size, byte r, byte g, byte b)
+    {
+        for (var dy = 0; dy < size; dy++)
+        {
+            var py = y + dy;
+            if (py < 0 || py >= bufferHeight) continue;
+
+            for (var dx = 0; dx < size; dx++)
+            {
+                var px = x + dx;
+                if (px < 0 || px >= bufferWidth) continue;
+
+                var index = (py * bufferWidth + px) * 4;
+                rgba[index] = r;
+                rgba[index + 1] = g;
+                rgba[index + 2] = b;
+                rgba[index + 3] = 0xFF;
+            }
+        }
+    }
+}
