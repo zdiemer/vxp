@@ -35,6 +35,32 @@ public enum NavigationPolicy
     FollowHeader,
 }
 
+/// <summary>What the player does when a choice segment ends and nothing was pressed.</summary>
+public enum ChoiceTimeout
+{
+    /// <summary>Take the first destination the segment offers, as the hardware does.</summary>
+    FirstBranch,
+
+    /// <summary>Carry on in disc order and ignore the branch table.</summary>
+    DiscOrder,
+
+    /// <summary>Pause on the last frame and wait for the viewer.</summary>
+    Wait,
+}
+
+/// <summary>What happens when the end of a track or of the disc is reached.</summary>
+public enum LoopMode
+{
+    /// <summary>Play on into the next segment, and stop at the end of the disc.</summary>
+    None,
+
+    /// <summary>Repeat the current track for ever.</summary>
+    Track,
+
+    /// <summary>Return to the first track when the disc ends.</summary>
+    Disc,
+}
+
 /// <summary>
 /// A VideoNow player: disc transport, the interactive branch logic read out of each
 /// segment header, and synchronised picture and sound.
@@ -49,13 +75,21 @@ public enum NavigationPolicy
 /// </remarks>
 public sealed class VideoNowPlayer : IDisposable
 {
+    /// <summary>Slowest playback rate the player accepts.</summary>
+    public const double MinSpeed = 0.25;
+
+    /// <summary>Fastest playback rate the player accepts.</summary>
+    public const double MaxSpeed = 8.0;
+
     private readonly DiscImage _disc;
     private readonly Dictionary<int, TrackReader> _readers = new();
+    private readonly List<int> _history = new();
     private readonly object _gate = new();
 
     private TrackReader? _reader;
-    private byte[] _audioTail = [];
-    private int _audioTailPosition;
+    private byte[] _frameAudio = [];
+    private double _audioPosition;
+    private double _speed = 1.0;
     private int _pendingChoiceSlot = -1;
     private bool _disposed;
 
@@ -70,7 +104,7 @@ public sealed class VideoNowPlayer : IDisposable
                  ?? throw new InvalidDataException("No VideoNow video stream was found on this disc.");
 
         Framebuffer = new byte[VideoDecoder.RgbaFrameBytes];
-        SelectTrack(disc.Tracks.Count > 0 ? disc.Tracks[0].Number : 1);
+        SelectTrack(FirstPlayableTrack());
     }
 
     /// <summary>Opens a player over the disc described by a cue sheet.</summary>
@@ -90,6 +124,22 @@ public sealed class VideoNowPlayer : IDisposable
 
     /// <summary>How the player chooses the next track.</summary>
     public NavigationPolicy Navigation { get; set; } = NavigationPolicy.DiscOrder;
+
+    /// <summary>What happens at a choice point when the viewer does nothing.</summary>
+    public ChoiceTimeout Timeout { get; set; } = ChoiceTimeout.FirstBranch;
+
+    /// <summary>What happens at the end of a track or of the disc.</summary>
+    public LoopMode Loop { get; set; } = LoopMode.None;
+
+    /// <summary>
+    /// Playback rate, where 1.0 is the disc's own rate. Audio is resampled to match, so
+    /// pitch rises and falls with speed as it would on tape.
+    /// </summary>
+    public double Speed
+    {
+        get => _speed;
+        set => _speed = Math.Clamp(value, MinSpeed, MaxSpeed);
+    }
 
     /// <summary>Track currently loaded, or 0 if none.</summary>
     public int CurrentTrack => _reader?.TrackNumber ?? 0;
@@ -112,6 +162,9 @@ public sealed class VideoNowPlayer : IDisposable
     /// <summary>Branch slot the viewer has selected for this segment, or -1.</summary>
     public int SelectedChoice => _pendingChoiceSlot;
 
+    /// <summary>Tracks visited so far, most recent last. Drives <see cref="GoBack"/>.</summary>
+    public IReadOnlyList<int> History => _history;
+
     /// <summary>
     /// Total samples produced by <see cref="RenderAudio"/> since the player was created.
     /// </summary>
@@ -122,11 +175,20 @@ public sealed class VideoNowPlayer : IDisposable
     /// </remarks>
     public long SamplesRendered { get; private set; }
 
+    /// <summary>Position within the current track.</summary>
+    public TimeSpan Position => Layout.FrameDuration * CurrentFrame;
+
+    /// <summary>Duration of the current track.</summary>
+    public TimeSpan TrackDuration => Layout.FrameDuration * TrackFrameCount;
+
     /// <summary>Raised on the audio thread whenever a new frame has been decoded into <see cref="Framebuffer"/>.</summary>
     public event Action<VideoNowPlayer>? FrameDecoded;
 
     /// <summary>Raised when playback moves to a different track.</summary>
     public event Action<VideoNowPlayer>? TrackChanged;
+
+    /// <summary>Raised when a segment starts offering the viewer a choice.</summary>
+    public event Action<VideoNowPlayer>? ChoicePresented;
 
     /// <summary>Begins or resumes playback.</summary>
     public void Play()
@@ -167,7 +229,8 @@ public sealed class VideoNowPlayer : IDisposable
         lock (_gate)
         {
             State = TransportState.Stopped;
-            SelectTrackCore(_disc.Tracks.Count > 0 ? _disc.Tracks[0].Number : 1);
+            _history.Clear();
+            SelectTrackCore(FirstPlayableTrack());
         }
     }
 
@@ -182,7 +245,7 @@ public sealed class VideoNowPlayer : IDisposable
     {
         lock (_gate)
         {
-            var next = NextTrackInDiscOrder(CurrentTrack);
+            var next = NextPlayableTrack(CurrentTrack);
             if (next is not null) SelectTrackCore(next.Value);
         }
     }
@@ -201,9 +264,66 @@ public sealed class VideoNowPlayer : IDisposable
                 return;
             }
 
-            var index = IndexOfTrack(CurrentTrack);
-            if (index > 0) SelectTrackCore(_disc.Tracks[index - 1].Number);
-            else SelectTrackCore(CurrentTrack);
+            var previous = PreviousPlayableTrack(CurrentTrack);
+            SelectTrackCore(previous ?? CurrentTrack);
+        }
+    }
+
+    /// <summary>
+    /// Returns to the segment played before this one, which is how you undo a wrong turn
+    /// in an interactive title.
+    /// </summary>
+    /// <returns>True if there was somewhere to go back to.</returns>
+    public bool GoBack()
+    {
+        lock (_gate)
+        {
+            if (_history.Count == 0) return false;
+
+            var target = _history[^1];
+            _history.RemoveAt(_history.Count - 1);
+
+            // SelectTrackCore would push the track we are leaving, undoing the pop.
+            var restore = _history.Count;
+            SelectTrackCore(target);
+            if (_history.Count > restore) _history.RemoveRange(restore, _history.Count - restore);
+            return true;
+        }
+    }
+
+    /// <summary>Moves to <paramref name="frameIndex"/> within the current track.</summary>
+    public void SeekToFrame(int frameIndex)
+    {
+        lock (_gate)
+        {
+            if (_reader is null) return;
+
+            CurrentFrame = Math.Clamp(frameIndex, 0, Math.Max(0, _reader.FrameCount - 1));
+            _frameAudio = [];
+            _audioPosition = 0;
+            DecodeCurrentFrameForDisplay();
+        }
+    }
+
+    /// <summary>Moves by <paramref name="seconds"/> within the current track.</summary>
+    public void SeekBy(double seconds)
+    {
+        lock (_gate)
+        {
+            var frames = (int)Math.Round(seconds * Layout.FrameRate);
+            SeekToFrameCore(CurrentFrame + frames);
+        }
+    }
+
+    /// <summary>
+    /// Steps <paramref name="delta"/> frames and pauses, for inspecting a title frame by frame.
+    /// </summary>
+    public void StepFrame(int delta)
+    {
+        lock (_gate)
+        {
+            State = TransportState.Paused;
+            SeekToFrameCore(CurrentFrame + delta);
         }
     }
 
@@ -218,15 +338,14 @@ public sealed class VideoNowPlayer : IDisposable
     {
         lock (_gate)
         {
-            var offered = false;
             foreach (var branch in Branches)
             {
-                if (branch.Slot == slot) { offered = true; break; }
+                if (branch.Slot != slot) continue;
+                _pendingChoiceSlot = slot;
+                return true;
             }
 
-            if (!offered) return false;
-            _pendingChoiceSlot = slot;
-            return true;
+            return false;
         }
     }
 
@@ -234,6 +353,26 @@ public sealed class VideoNowPlayer : IDisposable
     public void ClearChoice()
     {
         lock (_gate) _pendingChoiceSlot = -1;
+    }
+
+    /// <summary>
+    /// Takes a branch at once rather than waiting for the segment to end, for viewers who
+    /// would rather not sit through the rest of the scene.
+    /// </summary>
+    public bool TakeChoiceNow(int slot)
+    {
+        lock (_gate)
+        {
+            foreach (var branch in Branches)
+            {
+                if (branch.Slot != slot) continue;
+                if (!LoadTrack(branch.Track, remember: true)) return false;
+                DecodeCurrentFrameForDisplay();
+                return true;
+            }
+
+            return false;
+        }
     }
 
     /// <summary>
@@ -246,44 +385,58 @@ public sealed class VideoNowPlayer : IDisposable
     {
         lock (_gate)
         {
-            var written = 0;
-
-            while (written < destination.Length)
+            for (var i = 0; i < destination.Length; i++)
             {
-                if (State != TransportState.Playing)
+                if (State != TransportState.Playing) return Silence(destination, i);
+
+                // At speeds above 1.0 a single output sample can step past a whole frame.
+                while (_audioPosition >= _frameAudio.Length)
                 {
-                    destination[written..].Clear();
-                    SamplesRendered += destination.Length - written;
-                    return destination.Length;
+                    var consumed = _frameAudio.Length;
+                    if (!AdvanceFrame()) return Silence(destination, i);
+                    _audioPosition -= consumed;
                 }
 
-                if (_audioTailPosition >= _audioTail.Length && !AdvanceFrame())
-                {
-                    destination[written..].Clear();
-                    SamplesRendered += destination.Length - written;
-                    return destination.Length;
-                }
-
-                var available = _audioTail.Length - _audioTailPosition;
-                var take = Math.Min(available, destination.Length - written);
-                AudioDecoder.DecodePcm16(
-                    _audioTail.AsSpan(_audioTailPosition, take),
-                    destination.Slice(written, take));
-
-                _audioTailPosition += take;
-                written += take;
-                SamplesRendered += take;
+                destination[i] = SampleAt(_audioPosition);
+                _audioPosition += _speed;
+                SamplesRendered++;
             }
 
-            return written;
+            return destination.Length;
         }
     }
 
-    /// <summary>Position within the current track.</summary>
-    public TimeSpan Position => Layout.FrameDuration * CurrentFrame;
+    private int Silence(Span<short> destination, int from)
+    {
+        destination[from..].Clear();
+        SamplesRendered += destination.Length - from;
+        return destination.Length;
+    }
 
-    /// <summary>Duration of the current track.</summary>
-    public TimeSpan TrackDuration => Layout.FrameDuration * TrackFrameCount;
+    /// <summary>Reads the audio stream at a fractional position, interpolating between samples.</summary>
+    private short SampleAt(double position)
+    {
+        if (_frameAudio.Length == 0) return 0;
+
+        var index = Math.Clamp((int)position, 0, _frameAudio.Length - 1);
+        var current = (_frameAudio[index] - 128) << 8;
+
+        // The next sample lives in the following frame at a frame boundary; holding the
+        // current value there costs at most one sample of flatness per frame.
+        var next = index + 1 < _frameAudio.Length ? (_frameAudio[index + 1] - 128) << 8 : current;
+
+        return (short)(current + (next - current) * (position - index));
+    }
+
+    private void SeekToFrameCore(int frameIndex)
+    {
+        if (_reader is null) return;
+
+        CurrentFrame = Math.Clamp(frameIndex, 0, Math.Max(0, _reader.FrameCount - 1));
+        _frameAudio = [];
+        _audioPosition = 0;
+        DecodeCurrentFrameForDisplay();
+    }
 
     private bool AdvanceFrame()
     {
@@ -304,80 +457,116 @@ public sealed class VideoNowPlayer : IDisposable
         }
 
         CurrentFrame++;
+        ApplyFrame(frame);
+        _frameAudio = frame.Audio;
+        return true;
+    }
+
+    private void ApplyFrame(VideoNowFrame frame)
+    {
+        var hadChoice = Branches.Count > 0;
 
         CurrentHeader = frame.ReadHeader();
         Branches = CurrentHeader.OffersChoice ? CurrentHeader.Branches : [];
         if (Branches.Count == 0) _pendingChoiceSlot = -1;
 
         VideoDecoder.DecodeRgba(frame.PixelData, Framebuffer);
-        _audioTail = frame.Audio;
-        _audioTailPosition = 0;
 
         FrameDecoded?.Invoke(this);
-        return true;
+        if (!hadChoice && Branches.Count > 0) ChoicePresented?.Invoke(this);
     }
 
-    /// <summary>Applies the branch logic at the end of a segment. Returns false when the disc ends.</summary>
+    /// <summary>Applies the branch logic at the end of a segment. Returns false when playback ends.</summary>
     private bool GoToNextSegment()
     {
+        if (Loop == LoopMode.Track)
+        {
+            CurrentFrame = 0;
+            return true;
+        }
+
         var header = CurrentHeader;
-        var kind = header?.Kind ?? SegmentKind.None;
 
         // A viewer choice always wins.
         if (_pendingChoiceSlot >= 0 && header is not null)
         {
             foreach (var branch in header.Branches)
             {
-                if (branch.Slot == _pendingChoiceSlot && branch.Track != 0 && LoadTrack(branch.Track))
+                if (branch.Slot == _pendingChoiceSlot && branch.Track != 0 && LoadTrack(branch.Track, remember: true))
                     return true;
             }
         }
 
-        switch (kind)
+        switch (header?.Kind ?? SegmentKind.None)
         {
             case SegmentKind.Terminal:
-                State = TransportState.Stopped;
-                return false;
+                return EndOfPlayback();
 
             case SegmentKind.Hub:
             case SegmentKind.Restart:
-                if (header is { ContinueTrack: > 0 } && LoadTrack(header.ContinueTrack)) return true;
+                if (header is { ContinueTrack: > 0 } && LoadTrack(header.ContinueTrack, remember: true)) return true;
                 break;
 
             case SegmentKind.Choice:
             case SegmentKind.TaggedChoice:
-                // No choice was made: fall through to the first offered destination so
-                // the story still progresses, as the hardware does on a timeout.
-                if (header is not null && header.Branches.Count > 0 && LoadTrack(header.Branches[0].Track))
+                if (Timeout == ChoiceTimeout.Wait)
+                {
+                    CurrentFrame = Math.Max(0, TrackFrameCount - 1);
+                    State = TransportState.Paused;
+                    return false;
+                }
+
+                if (Timeout == ChoiceTimeout.FirstBranch
+                    && header is not null
+                    && header.Branches.Count > 0
+                    && LoadTrack(header.Branches[0].Track, remember: true))
+                {
                     return true;
+                }
+
                 break;
         }
 
         if (Navigation == NavigationPolicy.FollowHeader
             && header is { ContinueTrack: > 0 }
-            && LoadTrack(header.ContinueTrack))
+            && LoadTrack(header.ContinueTrack, remember: true))
         {
             return true;
         }
 
-        var next = NextTrackInDiscOrder(CurrentTrack);
-        if (next is not null && LoadTrack(next.Value)) return true;
+        var next = NextPlayableTrack(CurrentTrack);
+        if (next is not null && LoadTrack(next.Value, remember: true)) return true;
+
+        return EndOfPlayback();
+    }
+
+    private bool EndOfPlayback()
+    {
+        if (Loop == LoopMode.Disc && LoadTrack(FirstPlayableTrack(), remember: false)) return true;
 
         State = TransportState.Stopped;
         return false;
     }
 
-    private bool LoadTrack(int trackNumber)
+    private bool LoadTrack(int trackNumber, bool remember)
     {
         var reader = GetReader(trackNumber);
         if (reader is null || reader.FrameCount == 0) return false;
 
-        var changed = reader.TrackNumber != _reader?.TrackNumber;
+        var previous = _reader?.TrackNumber ?? 0;
+        var changed = reader.TrackNumber != previous;
+
+        if (remember && changed && previous != 0)
+        {
+            _history.Add(previous);
+            if (_history.Count > 256) _history.RemoveAt(0);
+        }
+
         _reader = reader;
         CurrentFrame = 0;
         _pendingChoiceSlot = -1;
-        _audioTail = [];
-        _audioTailPosition = 0;
+        _frameAudio = [];
+        _audioPosition = 0;
 
         if (changed) TrackChanged?.Invoke(this);
         return true;
@@ -385,16 +574,17 @@ public sealed class VideoNowPlayer : IDisposable
 
     private void SelectTrackCore(int trackNumber)
     {
-        if (!LoadTrack(trackNumber)) return;
+        if (!LoadTrack(trackNumber, remember: true)) return;
+        DecodeCurrentFrameForDisplay();
+    }
 
-        // Decode the first frame straight away so the picture is correct while paused.
-        var frame = _reader!.ReadFrame(0);
+    /// <summary>Decodes the current frame into the framebuffer without consuming its audio.</summary>
+    private void DecodeCurrentFrameForDisplay()
+    {
+        var frame = _reader?.ReadFrame(CurrentFrame);
         if (frame is null) return;
 
-        CurrentHeader = frame.ReadHeader();
-        Branches = CurrentHeader.OffersChoice ? CurrentHeader.Branches : [];
-        VideoDecoder.DecodeRgba(frame.PixelData, Framebuffer);
-        FrameDecoded?.Invoke(this);
+        ApplyFrame(frame);
     }
 
     private TrackReader? GetReader(int trackNumber)
@@ -413,18 +603,45 @@ public sealed class VideoNowPlayer : IDisposable
         return reader;
     }
 
+    /// <summary>True if the track carries a VideoNow stream rather than padding.</summary>
+    public bool IsPlayable(int trackNumber) => GetReader(trackNumber)?.FrameCount > 0;
+
+    private int FirstPlayableTrack()
+    {
+        foreach (var track in _disc.Tracks)
+            if (IsPlayable(track.Number)) return track.Number;
+
+        return _disc.Tracks.Count > 0 ? _disc.Tracks[0].Number : 1;
+    }
+
     private int IndexOfTrack(int trackNumber)
     {
         for (var i = 0; i < _disc.Tracks.Count; i++)
             if (_disc.Tracks[i].Number == trackNumber) return i;
+
         return -1;
     }
 
-    private int? NextTrackInDiscOrder(int trackNumber)
+    private int? NextPlayableTrack(int trackNumber)
     {
         var index = IndexOfTrack(trackNumber);
-        if (index < 0 || index + 1 >= _disc.Tracks.Count) return null;
-        return _disc.Tracks[index + 1].Number;
+        if (index < 0) return null;
+
+        for (var i = index + 1; i < _disc.Tracks.Count; i++)
+            if (IsPlayable(_disc.Tracks[i].Number)) return _disc.Tracks[i].Number;
+
+        return null;
+    }
+
+    private int? PreviousPlayableTrack(int trackNumber)
+    {
+        var index = IndexOfTrack(trackNumber);
+        if (index < 0) return null;
+
+        for (var i = index - 1; i >= 0; i--)
+            if (IsPlayable(_disc.Tracks[i].Number)) return _disc.Tracks[i].Number;
+
+        return null;
     }
 
     /// <inheritdoc />

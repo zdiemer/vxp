@@ -1,80 +1,138 @@
-using Vxp;
-using Vxp.Discs;
-using Vxp.Emulation;
+using Vxp.Cli;
 
-if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
+if (args.Length == 0)
 {
-    PrintUsage();
-    return args.Length == 0 ? 1 : 0;
+    Usage.Print();
+    return 1;
 }
+
+var command = args[0].ToLowerInvariant();
+var rest = CommandLine.Parse(args[1..]);
 
 try
 {
-    // Inspection subcommands run headless; anything else is a disc to play.
-    return args[0].ToLowerInvariant() switch
+    var exitCode = command switch
     {
-        "info" => Commands.Info(args[1..]),
-        "map" => Commands.Map(args[1..]),
-        "headers" => Commands.Headers(args[1..]),
-        "export" => Commands.Export(args[1..]),
-        "play" => Play(args[1..]),
-        _ => Play(args),
+        "play" => PlayCommand.Run(rest),
+        "info" => DiscCommands.Info(rest),
+        "tracks" => DiscCommands.Tracks(rest),
+        "map" => DiscCommands.Map(rest),
+        "graph" => DiscCommands.Graph(rest),
+        "headers" => DiscCommands.Headers(rest),
+        "verify" => DiscCommands.Verify(rest),
+        "export" => MediaCommands.Export(rest),
+        "frame" => MediaCommands.Frame(rest),
+        "audio" => MediaCommands.Audio(rest),
+        "run" => SessionCommand.Run(rest),
+        "config" => ConfigCommands.Config(rest),
+        "bind" => ConfigCommands.Bind(rest),
+        "help" or "-h" or "--help" => Usage.Print(),
+        "version" or "--version" => Usage.Version(),
+
+        // Anything else is taken as a disc to play, so "vxp disc.cue" just works.
+        _ => PlayCommand.Run(CommandLine.Parse(args)),
     };
+
+    foreach (var unknown in rest.Unrecognised())
+        Console.Error.WriteLine($"vxp: warning: ignored unknown option --{unknown}");
+
+    return exitCode;
 }
-catch (Exception ex)
+catch (Exception ex) when (ex is ArgumentException or FileNotFoundException or InvalidDataException or IOException)
 {
     Console.Error.WriteLine($"vxp: {ex.Message}");
     return 1;
 }
 
-static int Play(string[] args)
+/// <summary>The help text.</summary>
+internal static class Usage
 {
-    var cuePath = args.FirstOrDefault(a => !a.StartsWith('-'))
-                  ?? throw new ArgumentException("A .cue file path is required.");
+    public static int Version()
+    {
+        var version = typeof(Usage).Assembly.GetName().Version;
+        Console.WriteLine($"vxp {version?.ToString(3) ?? "unknown"}");
+        return 0;
+    }
 
-    if (!File.Exists(cuePath))
-        throw new FileNotFoundException($"Cue sheet not found: {cuePath}");
+    public static int Print()
+    {
+        Console.WriteLine("""
+            vxp - a VideoNow XP emulator
 
-    using var disc = DiscImage.Open(cuePath);
-    using var player = new VideoNowPlayer(disc);
+            PLAYING
+              vxp <disc.cue> [options]         Play a disc.
+              vxp play <disc.cue> [options]    The same, spelled out.
 
-    if (Options.Flag(args, "--follow-header")) player.Navigation = NavigationPolicy.FollowHeader;
-    if (Options.Value(args, "--track") is { } track && int.TryParse(track, out var trackNumber))
-        player.SelectTrack(trackNumber);
+                --track N          Start on this track.
+                --frame N          Start at this frame of that track.
+                --scale N          Window scale factor. Default comes from settings.
+                --fullscreen       Start full screen.
+                --speed N          Playback rate as a percentage, 25 to 800.
+                --loop MODE        none, track or disc.
+                --navigation MODE  discOrder or followHeader.
+                --choice-timeout M firstBranch, discOrder or wait.
+                --mute             Start silent.
+                --volume N         Volume, 0 to 100.
+                --no-config        Ignore the settings file and use defaults.
 
-    var scale = Options.Value(args, "--scale") is { } s && int.TryParse(s, out var parsed) ? parsed : 5;
+            INSPECTING
+              vxp info <disc.cue> [--json]     Format, timing and the track list.
+              vxp tracks <disc.cue> [--playable] [--json]
+              vxp map <disc.cue> [--json]      Segment kinds and the branch table.
+              vxp graph <disc.cue> [--format dot|mermaid|json] [--out FILE]
+              vxp headers <disc.cue> [--track N] [--frames N] [--all]
+              vxp verify <disc.cue> [--deep] [--json]
 
-    using var window = new PlayerWindow(player, scale, Options.Flag(args, "--fullscreen"));
-    window.Run();
-    return 0;
+            EXPORTING
+              vxp export <disc.cue> --out DIR [--track N] [--start N] [--frames N]
+                                              [--every N] [--scale N] [--no-audio] [--no-video]
+              vxp frame <disc.cue> --track N [--frame N] --out FILE.png [--scale N]
+              vxp audio <disc.cue> --out FILE.wav [--track N]
+
+              Picture options accepted by export and frame:
+                --brightness N  --contrast N  --gamma N  --saturation N  --swizzle RGB
+
+            SCRIPTING
+              vxp run <disc.cue> [--script FILE | --commands "a; b; c"] [options]
+
+                Runs the emulator with no window, as fast as it decodes.
+                --script -         Read the script from standard input.
+                --wav FILE         Record the session soundtrack.
+                --frames-out DIR   Write every decoded frame as a PNG.
+                --max-frames N     Stop writing frames after N of them.
+                --max-seconds N    Ceiling on "play all". Default 3600.
+                --json             Machine-readable status output.
+
+                Script commands, one per line or separated by semicolons:
+                  track N            Jump to a track          play [5s|90f|track|all]
+                  pause / resume     Transport                stop
+                  next / prev        Track skip               back
+                  seek 5s / seek -2s Move within a track      frame N
+                  step [N]           Step frames and pause    speed 2.0
+                  choice N           Queue a branch           choose N (take it now)
+                  screenshot FILE    Write a PNG              status
+                  expect FIELD VALUE Check track, frame, state, kind or choices
+                  echo TEXT          Print a line             # comment
+
+            SETTINGS
+              vxp config list [filter] [--json]
+              vxp config get <setting> [--json]
+              vxp config set <setting> <value>
+              vxp config reset [<setting>|all]
+              vxp config recent [clear]
+              vxp config path
+
+              vxp bind list [--json]
+              vxp bind set <action> <control>      e.g. vxp bind set TogglePause Space
+              vxp bind add <action> <control>      e.g. vxp bind add TogglePause Pad:A
+              vxp bind clear <action>
+              vxp bind reset [<action>|all]
+              vxp bind keys                        List every bindable key name.
+
+            Press the menu key while playing (Escape by default) for the settings,
+            track browser and controls pages.
+            """);
+
+        return 0;
+    }
 }
-
-static void PrintUsage() => Console.WriteLine("""
-    vxp - a VideoNow XP emulator
-
-    Usage:
-      vxp <disc.cue> [options]            Play a disc.
-      vxp info    <disc.cue>              Format, frame rate, track list and durations.
-      vxp map     <disc.cue>              Segment kinds and the interactive branch table.
-      vxp headers <disc.cue> [--track N] [--all]
-                                          Dump the per-frame controller register file.
-      vxp export  <disc.cue> --out <dir> [--track N] [--frames N] [--scale N] [--swizzle RGB]
-                                          Write PNG frames and a WAV soundtrack.
-
-    Play options:
-      --track N         Start on this track instead of the first.
-      --scale N         Window scale factor. Default 5, giving 720x400.
-      --fullscreen      Start full screen.
-      --follow-header   Follow register 0x4F as a next-track pointer. Experimental;
-                        see docs/format.md.
-
-    Controls:
-      Space             Play / pause
-      Left / Right      Previous / next track
-      1 - 6             Take a branch at an interactive decision point
-      Up / Down         Volume
-      Backspace         Stop and rewind to the start of the disc
-      F                 Toggle full screen
-      Tab               Toggle the status overlay
-      Esc               Quit
-    """);

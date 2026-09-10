@@ -1,9 +1,9 @@
 using System.Buffers.Binary;
 
-namespace Vxp;
+namespace Vxp.Video;
 
 /// <summary>Writes mono 16-bit PCM WAV files.</summary>
-internal sealed class WavWriter : IDisposable
+public sealed class WavWriter : IDisposable
 {
     private readonly FileStream _stream;
     private int _dataBytes;

@@ -1,10 +1,10 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
 
-namespace Vxp;
+namespace Vxp.Video;
 
 /// <summary>Minimal PNG encoder for RGBA buffers, so exports need no image library.</summary>
-internal static class PngWriter
+public static class PngWriter
 {
     public static void Write(string path, ReadOnlySpan<byte> rgba, int width, int height, int scale = 1)
     {
