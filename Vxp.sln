@@ -1,0 +1,38 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{5F135601-B77D-4C6A-BEE4-A43E845D52CC}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{4CB95A6F-79A4-4428-8AA7-EED7130D2150}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Vxp.Core", "src\Vxp.Core\Vxp.Core.csproj", "{6002FC87-1598-4BD7-A863-865CC3626939}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Vxp", "src\Vxp\Vxp.csproj", "{8FA755B4-5E4B-4810-B9C4-43057BB481A0}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Vxp.Core.Tests", "tests\Vxp.Core.Tests\Vxp.Core.Tests.csproj", "{478DF383-C6B0-4506-A64D-81B10B5A0F20}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{6002FC87-1598-4BD7-A863-865CC3626939}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6002FC87-1598-4BD7-A863-865CC3626939}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6002FC87-1598-4BD7-A863-865CC3626939}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6002FC87-1598-4BD7-A863-865CC3626939}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8FA755B4-5E4B-4810-B9C4-43057BB481A0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8FA755B4-5E4B-4810-B9C4-43057BB481A0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8FA755B4-5E4B-4810-B9C4-43057BB481A0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8FA755B4-5E4B-4810-B9C4-43057BB481A0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{478DF383-C6B0-4506-A64D-81B10B5A0F20}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{478DF383-C6B0-4506-A64D-81B10B5A0F20}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{478DF383-C6B0-4506-A64D-81B10B5A0F20}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{478DF383-C6B0-4506-A64D-81B10B5A0F20}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = postSolution
+		{6002FC87-1598-4BD7-A863-865CC3626939} = {5F135601-B77D-4C6A-BEE4-A43E845D52CC}
+		{8FA755B4-5E4B-4810-B9C4-43057BB481A0} = {5F135601-B77D-4C6A-BEE4-A43E845D52CC}
+		{478DF383-C6B0-4506-A64D-81B10B5A0F20} = {4CB95A6F-79A4-4428-8AA7-EED7130D2150}
+	EndGlobalSection
+EndGlobal

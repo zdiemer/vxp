@@ -1,9 +1,0 @@
-<Solution>
-  <Folder Name="/src/">
-    <Project Path="src/Vxp.Core/Vxp.Core.csproj" />
-    <Project Path="src/Vxp/Vxp.csproj" />
-  </Folder>
-  <Folder Name="/tests/">
-    <Project Path="tests/Vxp.Core.Tests/Vxp.Core.Tests.csproj" />
-  </Folder>
-</Solution>
