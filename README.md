@@ -1,3 +1,18 @@
+<div align="center">
+
+<img src="docs/banner.svg" alt="vxp" width="760">
+
+**Play VideoNow XP discs on your PC.**
+
+![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?style=flat-square&logo=dotnet&logoColor=white)
+![Discs](https://img.shields.io/badge/discs-VideoNow_XP_+_Color-f2a33c?style=flat-square)
+![Picture](https://img.shields.io/badge/picture-144x80_@_8.93_fps-4fd2e3?style=flat-square)
+![Audio](https://img.shields.io/badge/audio-17640_Hz_mono-4fd2e3?style=flat-square)
+![Interactive](https://img.shields.io/badge/branching-read_from_the_disc-8f7ae8?style=flat-square)
+![License](https://img.shields.io/badge/license-MIT-3f8f66?style=flat-square)
+
+</div>
+
 # vxp
 
 An emulator for the **VideoNow XP**, the Hasbro/Tiger personal video player that read
@@ -24,15 +39,30 @@ vxp "Some Title.cue"
 - **Headless CLI** — inspect, verify, export, graph the branch structure, and drive
   scripted playback with no window at all.
 
-Playback is clocked by the audio: the player decodes exactly as many frames as the sound
-card consumes, so picture and sound cannot drift apart.
+## The disc is not a video file
 
-There is no FFmpeg or libVLC dependency. VideoNow is not a container format around a
-standard codec — the disc is raw CD audio sectors carrying an interleaved video and audio
-stream aimed straight at an LCD controller — so a general-purpose media library has
-nothing to decode. The whole codec is a few hundred lines. FFmpeg is still handy for
-turning `vxp export` output into a normal video file, which is why export writes PNG and
-WAV.
+A VideoNow disc is a physically small CD pressed as an **ordinary audio CD**: no
+filesystem, no container, no standard codec. The player reads raw 2352-byte CD-DA sectors
+and feeds them almost straight to an LCD controller and a DAC, so there is nothing here for
+a general-purpose media library to open. Decoding it is a few hundred lines, and `Vxp.Core`
+is those lines.
+
+Everything else falls out of that one fact:
+
+- The stream is interleaved **nine video bytes to one audio byte**. A CD reads 176 400
+  bytes a second, so the audio is 17 640 Hz — a tenth of the disc — and that is why.
+- Frames are a fixed size on disc, 19 760 bytes on XP and 19 600 on Color, both carrying
+  the same 144 x 80 picture. The frame rate is not stored anywhere; it is
+  `176 400 / 19 760` = **8.9271 fps**, arithmetic rather than metadata.
+- Which variant a disc is comes from **counting sync-word repeats** in the frame header:
+  24 means Color, 12 means XP.
+- Audio is therefore the honest master clock, and playback is clocked by it — the player
+  decodes exactly as many frames as the sound card consumes, so picture and sound cannot
+  drift apart. A headless run is the same loop with no sound card, which is what makes
+  scripted playback deterministic.
+- Interactive titles are not a separate feature of the player. Branches are cut as
+  ordinary tracks and the destinations are declared in each segment's header, so following
+  a story is reading the disc rather than guessing at it.
 
 ## Requirements
 
@@ -156,7 +186,6 @@ and `--swizzle`.
 
 ```sh
 vxp export "Some Title.cue" --track 2 --out frames
-ffmpeg -framerate 176400/19760 -i frames/t02_f%05d.png -i frames/audio.wav out.mp4
 ```
 
 ## Driving it headlessly
