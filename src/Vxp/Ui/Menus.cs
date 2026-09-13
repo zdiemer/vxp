@@ -417,10 +417,10 @@ public static class Menus
                 new MenuNumber
                 {
                     Label = "Pixel aspect",
-                    Help = "Width of a source pixel relative to its height, in hundredths.",
+                    Help = "The panel's pixels are taller than they are wide. 100 shows the stored grid instead.",
                     Get = () => (int)Math.Round(video.PixelAspect * 100),
                     Set = v => video.PixelAspect = v / 100.0,
-                    Minimum = 50, Maximum = 200, Step = 5, Default = 100,
+                    Minimum = 50, Maximum = 200, Step = 2, Default = 74,
                     Format = v => (v / 100.0).ToString("0.00"),
                 },
 
@@ -785,11 +785,11 @@ public static class Menus
         return new MenuNumber
         {
             Label = "Window scale",
-            Help = "Size of the window as a multiple of the 144x80 picture.",
+            Help = "Size of the window as a multiple of the picture.",
             Get = () => video.WindowScale,
             Set = v => video.WindowScale = v,
             Minimum = 1, Maximum = 16, Default = 5,
-            Format = v => $"{v}x  ({FrameLayout.Width * v}x{FrameLayout.Height * v})",
+            Format = v => $"{v}x  ({PlayerWindow.DisplayWidth(video) * v}x{FrameLayout.Height * v})",
         };
     }
 

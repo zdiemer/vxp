@@ -101,7 +101,7 @@ public sealed unsafe class PlayerWindow : IDisposable
         _window = _sdl.CreateWindow(
             "vxp",
             Sdl.WindowposCentered, Sdl.WindowposCentered,
-            FrameLayout.Width * scale, FrameLayout.Height * scale,
+            DisplayWidth(settings.Video) * scale, FrameLayout.Height * scale,
             (uint)(WindowFlags.Shown | WindowFlags.Resizable));
 
         if (_window is null)
@@ -398,6 +398,18 @@ public sealed unsafe class PlayerWindow : IDisposable
         _effectWidth = 0; // force the grid overlay to be rebuilt
         _menuBarStale = true;
     }
+
+    /// <summary>
+    /// Width one frame occupies on screen, in source pixels, once the panel's non-square
+    /// pixels are allowed for.
+    /// </summary>
+    /// <remarks>
+    /// The picture is stored 144 wide but is not 144 wide to look at, so this is what the
+    /// window is sized from. Sizing the window to the stored width instead would leave
+    /// the picture pillarboxed in a window that never fits it.
+    /// </remarks>
+    public static int DisplayWidth(VideoSettings video)
+        => (int)Math.Round(FrameLayout.Width * Math.Clamp(video.PixelAspect, 0.5, 2.0));
 
     private void SetHint(string name, string value)
     {

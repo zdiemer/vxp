@@ -78,10 +78,16 @@ public sealed class VideoSettings
     public bool VSync { get; set; } = true;
 
     /// <summary>
-    /// Width of a source pixel relative to its height. The panel's pixels are not
-    /// perfectly square; 1.0 reproduces the stored image geometry exactly.
+    /// Width of a source pixel relative to its height.
     /// </summary>
-    public double PixelAspect { get; set; } = 1.0;
+    /// <remarks>
+    /// The stored 144 x 80 grid is not the shape of the picture: the panel's pixels are
+    /// appreciably taller than they are wide, and the titles are 4:3 broadcast animation.
+    /// The default puts a 144 x 80 frame back at 4:3, which is also within a few percent
+    /// of the geometry of the real panel. Set it to 1.0 to see the stored grid instead,
+    /// which is useful for studying the format and wrong for watching anything.
+    /// </remarks>
+    public double PixelAspect { get; set; } = 0.74;
 
     /// <summary>Brightness adjustment, -100 to 100.</summary>
     public int Brightness { get; set; }

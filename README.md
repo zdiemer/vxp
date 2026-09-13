@@ -33,7 +33,8 @@ vxp "Some Title.cue"
 ## What it does
 
 - **VideoNow XP and VideoNow Color** discs, detected automatically.
-- **Picture** — 144 x 80, three 4-bit channels per pixel, decoded natively.
+- **Picture** — 144 x 80, three 4-bit channels per pixel, decoded natively and shown at
+  the shape the panel showed it rather than the shape it is stored in.
 - **Sound** — 17 640 Hz mono, in sync and at full speed.
 - **Transport** — play, pause, seek, frame step, variable speed, fast forward, loop.
 - **Interactive titles** — the branch table is read out of each segment's header, so
@@ -46,7 +47,7 @@ vxp "Some Title.cue"
 
 <div align="center">
 
-<img src="docs/media/picture.gif" alt="The opening of a VideoNow XP disc, decoded frame by frame" width="432">
+<img src="docs/media/picture.gif" alt="The opening of a VideoNow XP disc, decoded frame by frame" width="400">
 
 <em>The opening of an XP disc, decoded straight off the CD stream: 144 x 80 pixels,<br>
 three 4-bit channels each, 8.93 frames a second.</em>
@@ -70,6 +71,11 @@ Everything else falls out of that one fact:
   `176 400 / 19 760` = **8.9271 fps**, arithmetic rather than metadata.
 - Which variant a disc is comes from **counting sync-word repeats** in the frame header:
   24 means Color, 12 means XP.
+- That 144 x 80 is the shape of the *storage*, not of the picture. The panel's pixels are
+  appreciably taller than they are wide, so a frame drawn with square pixels comes out
+  about a third too wide; `vxp` puts it back at 4:3, which is what the titles were shot
+  at. The larger resolutions quoted elsewhere — 216 x 160, 240 x 160 — are counting 4-bit
+  colour samples rather than pixels, or are uncited; `docs/format.md` works through both.
 - Audio is therefore the honest master clock, and playback is clocked by it — the player
   decodes exactly as many frames as the sound card consumes, so picture and sound cannot
   drift apart. A headless run is the same loop with no sound card, which is what makes

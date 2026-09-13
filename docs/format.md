@@ -111,6 +111,43 @@ Fine colour speckle in decoded frames is in the source, not the decoder: the mas
 tools dithered to 4 bits per channel, which is invisible on a 1.8-inch panel and obvious
 at 5x on a monitor.
 
+### The pixels are not square
+
+144 x 80 is the shape of the *storage*, not of the picture. Drawn with square pixels a
+frame comes out at 1.80:1 and everyone in it is about a third too wide. Two independent
+lines put the real pixel aspect near **0.72**, and `vxp` defaults to **0.74**:
+
+- The titles are 4:3 broadcast animation. Putting a 144 x 80 frame back at 4:3 needs
+  `(4/3) / (144/80)` = **0.74**, and at that ratio faces and figures come out right.
+- The Color player's screen is quoted as 1.85 x 1.45 inches, which is 1.28:1. Spreading
+  216 x 160 panel dots over it gives nearly square dots, and one image pixel spans 1.5
+  dots across and 2 down, so `(1.5 x 1.85/216) / (2 x 1.45/160)` = **0.71**. That lands
+  the picture at 1.28:1 — the shape of the screen.
+
+Set `video.pixelAspect` to `1.0` to see the stored grid instead, which is what you want
+when studying the layout and not when watching anything.
+
+### Where the published resolutions come from
+
+Retail material and reference pages quote higher numbers than 144 x 80. They are
+measuring something else.
+
+**216 x 160** is the count of 4-bit colour *samples*, not of pixels. The pixel payload is
+17 280 bytes = 34 560 nibbles, laid out as 160 half-rows of 108 bytes, and each half-row
+is 216 nibbles: `216 x 160` = 34 560 exactly. Three samples make one full-colour pixel,
+so `34 560 / 3` = 11 520 = 144 x 80. It is most likely a genuine count of panel dots —
+which fits the zig-zag, since a pixel's three samples come from two different half-rows
+and two adjacent columns, the signature of a delta or mosaic colour LCD rather than
+stripes.
+
+**240 x 160** appears on Wikipedia for both Color and XP, uncited. The claims around it
+do not survive contact with a real disc: it says the video is compressed (there is no
+codec at all), that it runs at 15 fps (it is `176 400 / 19 760` = 8.93, and 9.00 on
+Color), and that video sits on the left audio channel with sound on the right (it is a
+9:1 byte interleave, not a stereo split). Its black and white figure — 80 x 80 non-square
+with 16 greys — does match, so the page is not uniformly wrong, but nothing on it should
+be preferred to the disc.
+
 ## The frame header (established)
 
 The header is not a struct. It is a small command stream aimed at the display controller:
