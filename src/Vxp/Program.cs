@@ -100,7 +100,7 @@ internal static class Usage
                 --wav FILE         Record the session soundtrack.
                 --frames-out DIR   Write every decoded frame as a PNG.
                 --max-frames N     Stop writing frames after N of them.
-                --max-seconds N    Ceiling on "play all". Default 3600.
+                --max-seconds N    Ceiling on "play all" and "play track". Default 3600.
                 --json             Machine-readable status output.
 
                 Script commands, one per line or separated by semicolons:

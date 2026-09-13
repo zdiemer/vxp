@@ -232,13 +232,16 @@ public static class SessionCommand
         {
             _player.Play();
 
+            // Both open-ended forms answer to the same ceiling. A disc can quite legally
+            // ask for a segment to repeat for ever: a menu whose first branch names its
+            // own track sits there until the viewer picks something, which is what Teen
+            // Titans track 23 does. That is the right thing on the hardware and a hang in
+            // a script, so a scripted run always has a way back out.
+            var limit = (long)_args.Int("max-seconds", 3600) * FrameLayout.AudioSampleRate;
+            var rendered = 0L;
+
             if (operand is null or "all")
             {
-                // Run until the disc stops us, with a ceiling so a looping disc cannot
-                // spin for ever in a script.
-                var limit = _args.Int("max-seconds", 3600) * FrameLayout.AudioSampleRate;
-                var rendered = 0L;
-
                 while (_player.State == TransportState.Playing && rendered < limit)
                 {
                     _player.RenderAudio(_buffer);
@@ -246,18 +249,21 @@ public static class SessionCommand
                     rendered += _buffer.Length;
                 }
 
+                WarnIfCapped(rendered, limit, "all");
                 return;
             }
 
             if (operand == "track")
             {
                 var track = _player.CurrentTrack;
-                while (_player.State == TransportState.Playing && _player.CurrentTrack == track)
+                while (_player.State == TransportState.Playing && _player.CurrentTrack == track && rendered < limit)
                 {
                     _player.RenderAudio(_buffer);
                     Capture();
+                    rendered += _buffer.Length;
                 }
 
+                WarnIfCapped(rendered, limit, $"track {track}");
                 return;
             }
 
@@ -272,6 +278,17 @@ public static class SessionCommand
                 Capture(take);
                 done += take;
             }
+        }
+
+        /// <summary>
+        /// Says so when a play ran into the ceiling rather than reaching its own end, so
+        /// a truncated run cannot quietly look like a complete one.
+        /// </summary>
+        private void WarnIfCapped(long rendered, long limit, string what)
+        {
+            if (rendered < limit) return;
+
+            Report($"play {what}: stopped at the --max-seconds ceiling with the disc still playing.");
         }
 
         private void Capture(int count = -1)

@@ -259,7 +259,7 @@ vxp run "Some Title.cue" --commands "track 6; choice 2; play track; expect track
 | `--wav FILE` | Record the session soundtrack |
 | `--frames-out DIR` | Write every decoded frame as a PNG |
 | `--max-frames N` | Stop writing frames after N |
-| `--max-seconds N` | Ceiling on `play all` |
+| `--max-seconds N` | Ceiling on `play all` and `play track`, in disc seconds. Default 3600 |
 | `--json` | Machine-readable `status` output |
 
 Script commands, one per line or separated by semicolons, with `#` for comments:

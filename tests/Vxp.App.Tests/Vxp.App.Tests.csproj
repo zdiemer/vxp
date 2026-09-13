@@ -12,4 +12,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Vxp\Vxp.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Shared with the core tests: builds VideoNow streams and writes a real disc image,
+         so the session driver can be run end to end without a retail disc. -->
+    <Compile Include="..\Vxp.Core.Tests\SyntheticDisc.cs" Link="SyntheticDisc.cs" />
+    <Compile Include="..\Vxp.Core.Tests\SyntheticDiscFile.cs" Link="SyntheticDiscFile.cs" />
+  </ItemGroup>
 </Project>
