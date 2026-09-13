@@ -338,10 +338,12 @@ public static class DiscCommands
                     VideoDecoder.DecodeRgba(frame.PixelData, rgba);
                 }
 
-                Console.Write($"\rChecked track {info.Number}...");
+                // Progress is for a person watching a long check, so it goes to stderr
+                // and not at all when the output is meant to be parsed.
+                if (!args.Json) Console.Error.Write($"\rChecked track {info.Number}...");
             }
 
-            Console.Write("\r                          \r");
+            if (!args.Json) Console.Error.Write("\r                          \r");
         }
 
         if (args.Json)
