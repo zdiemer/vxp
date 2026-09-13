@@ -341,6 +341,11 @@ public class MenuBuildTests
             ToggleFullscreen = () => { },
             Quit = () => { },
             Toast = _ => { },
+            Perform = _ => { },
+            SelectTrack = _ => { },
+            OpenPage = _ => { },
+            ShowInfo = (_, _) => { },
+            OpenScreenshots = () => { },
         };
     }
 

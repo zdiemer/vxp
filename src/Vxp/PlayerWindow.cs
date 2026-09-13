@@ -5,6 +5,7 @@ using Vxp.Emulation;
 using Vxp.Format;
 using Vxp.Input;
 using Vxp.Ui;
+using Vxp.Ui.Native;
 using Vxp.Video;
 
 namespace Vxp;
@@ -24,6 +25,9 @@ public sealed unsafe class PlayerWindow : IDisposable
 {
     private const ushort AudioS16Lsb = 0x8010;
     private const int AxisThreshold = 16000;
+
+    /// <summary>Timer that keeps playback alive while a native menu holds the thread.</summary>
+    private const nuint MenuLoopTimerId = 1;
 
     private readonly VideoNowPlayer _player;
     private readonly VxpSettings _settings;
@@ -58,7 +62,17 @@ public sealed unsafe class PlayerWindow : IDisposable
     private int _effectHeight;
     private bool _fastForward;
     private bool _focused = true;
+
+    private nint _nativeWindow;
+    private Win32MenuBar? _menuBar;
+    private Win32WindowHook? _messageHook;
+    private bool _menuBarStale;
+    private bool _inMenuLoop;
+    private bool _pumping;
+    private bool _altUsed;
+
     private readonly bool _traceInput = Environment.GetEnvironmentVariable("VXP_TRACE_INPUT") == "1";
+    private readonly bool _traceMenu = Environment.GetEnvironmentVariable("VXP_TRACE_MENU") == "1";
     private bool _running = true;
     private bool _disposed;
 
@@ -77,6 +91,10 @@ public sealed unsafe class PlayerWindow : IDisposable
         _sdl = Sdl.GetApi();
         if (_sdl.Init(Sdl.InitVideo | Sdl.InitAudio | Sdl.InitGamecontroller) != 0)
             throw new InvalidOperationException($"SDL_Init failed: {_sdl.GetErrorS()}");
+
+        // SDL swallows Alt and F10 so games can use them, which would leave a native menu
+        // bar reachable only with the mouse. The menu matters more here than Alt does.
+        if (settings.Interface.NativeMenuBar) SetHint("SDL_WINDOWS_ENABLE_MENU_MNEMONICS", "1");
 
         var scale = Math.Clamp(settings.Video.WindowScale, 1, 16);
 
@@ -118,8 +136,216 @@ public sealed unsafe class PlayerWindow : IDisposable
         _menu.Changed += ApplySettings;
 
         ApplySettings();
+        CreateNativeMenu(FrameLayout.Height * scale);
+        _menuBarStale = false;
+
         if (settings.Video.Fullscreen) SetFullscreen(true);
         if (settings.Emulation.AutoPlay) _player.Play();
+    }
+
+    /// <summary>
+    /// Puts a native menu bar on the window, where the platform has one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The bar is built from the same pages the in-window menu draws. Both stay
+    /// available: the bar is the everyday surface, and the in-window menu is what full
+    /// screen, game controllers and the other platforms use — and it is still the only
+    /// place a control can be rebound, because a menu bar has nowhere to catch a
+    /// keypress.
+    /// </para>
+    /// <para>
+    /// <paramref name="desiredClientHeight"/> is the picture height the window was asked
+    /// for. SDL sizes windows without knowing about a menu, so the bar would otherwise
+    /// take its strip out of the picture.
+    /// </para>
+    /// </remarks>
+    private void CreateNativeMenu(int desiredClientHeight)
+    {
+        if (!OperatingSystem.IsWindows() || !_settings.Interface.NativeMenuBar) return;
+
+        var version = new Silk.NET.SDL.Version();
+        _sdl.GetVersion(ref version);
+
+        var info = new SysWMInfo { Version = version };
+        if (!_sdl.GetWindowWMInfo(_window, &info) || info.Subsystem != SysWMType.Windows) return;
+
+        _nativeWindow = info.Info.Win.Hwnd;
+        if (_nativeWindow == 0) return;
+
+        try
+        {
+            _menuBar = new Win32MenuBar(_nativeWindow, Menus.Bar(BuildContext()), OnNativeMenuChanged);
+        }
+        catch (InvalidOperationException)
+        {
+            // No menu bar is a cosmetic loss; the in-window menu still works.
+            _nativeWindow = 0;
+            return;
+        }
+
+        // Menu messages never reach SDL_PollEvent in time to be useful: Windows runs its
+        // own modal loop while a menu is open, so they have to be taken as they arrive.
+        // Without the hook nothing on the bar would do anything, so a bar is only worth
+        // showing if the hook went on.
+        _messageHook = new Win32WindowHook(_nativeWindow, OnWindowsMessage);
+        if (!_messageHook.Installed)
+        {
+            _messageHook.Dispose();
+            _messageHook = null;
+            _menuBar.Dispose();
+            _menuBar = null;
+            _nativeWindow = 0;
+            return;
+        }
+
+        _menuBar.Attach();
+        _menuBar.PreserveClientHeight(desiredClientHeight);
+    }
+
+    private void OnWindowsMessage(uint message, nuint wParam, nint lParam)
+    {
+        if (_traceMenu && message is Win32.WmCommand or Win32.WmInitMenuPopup or Win32.WmEnterMenuLoop or Win32.WmExitMenuLoop)
+        {
+            Console.Error.WriteLine($"[menu] msg=0x{message:X} wParam=0x{wParam:X} lParam=0x{lParam:X} bar={_menuBar is not null}");
+            Console.Error.Flush();
+        }
+
+        if (_menuBar is not { } bar) return;
+
+        switch (message)
+        {
+            // A menu choice has a zero high word and no control handle behind it.
+            case Win32.WmCommand when (wParam >> 16) == 0 && lParam == 0:
+                bar.Invoke((int)(wParam & 0xFFFF));
+                break;
+
+            case Win32.WmInitMenuPopup:
+                bar.RefreshPopup((nint)wParam);
+                break;
+
+            case Win32.WmEnterMenuLoop:
+                _inMenuLoop = true;
+                Win32.SetTimer(_nativeWindow, MenuLoopTimerId, 15, 0);
+                break;
+
+            case Win32.WmExitMenuLoop:
+                _inMenuLoop = false;
+                Win32.KillTimer(_nativeWindow, MenuLoopTimerId);
+                break;
+
+            case Win32.WmTimer when _inMenuLoop && wParam == MenuLoopTimerId:
+                PumpWhileMenuIsOpen();
+                break;
+
+            case Win32.WmSysKeyDown:
+                OnSystemKeyDown(wParam, lParam);
+                break;
+
+            // A bare Alt, pressed and released with nothing in between, opens the bar.
+            case Win32.WmSysKeyUp when wParam == Win32.VkMenu:
+                if (!_altUsed) ActivateMenuBar('\0');
+                _altUsed = false;
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Gives the menu bar the keyboard, which it does not otherwise get.
+    /// </summary>
+    /// <remarks>
+    /// Windows normally turns Alt and F10 into a menu activation inside
+    /// <c>DefWindowProc</c>, but SDL handles those keys itself and never passes them on,
+    /// so a menu bar on an SDL window can only be opened with the mouse. Reading the
+    /// keys here and asking for the activation directly puts that back. Alt with a
+    /// letter is only forwarded when the letter really is one of the bar's mnemonics, so
+    /// a control bound to Alt and something else still behaves as the viewer bound it.
+    /// </remarks>
+    private void OnSystemKeyDown(nuint wParam, nint lParam)
+    {
+        if (wParam == Win32.VkMenu)
+        {
+            if ((lParam & Win32.KeyWasDown) == 0) _altUsed = false;
+            return;
+        }
+
+        _altUsed = true;
+
+        if (wParam == Win32.VkF10)
+        {
+            ActivateMenuBar('\0');
+            return;
+        }
+
+        var key = (char)wParam;
+        if (_menuBar?.HasMnemonic(key) == true) ActivateMenuBar(key);
+    }
+
+    private void ActivateMenuBar(char mnemonic)
+    {
+        if (_nativeWindow == 0 || _settings.Video.Fullscreen) return;
+
+        Win32.PostMessage(_nativeWindow, Win32.WmSysCommand, Win32.ScKeyMenu, mnemonic);
+    }
+
+    /// <summary>
+    /// Keeps sound and picture running while an open menu holds the thread.
+    /// </summary>
+    /// <remarks>
+    /// An open Windows menu runs its own message loop, so <see cref="Run"/> stops turning
+    /// for as long as the menu is up. Left alone the queued audio would drain dry and the
+    /// picture would freeze, so a timer inside that loop drives the same work the main
+    /// loop does, minus the event pump that Windows is already doing.
+    /// </remarks>
+    private void PumpWhileMenuIsOpen()
+    {
+        if (_pumping) return;
+
+        _pumping = true;
+        try
+        {
+            TopUpAudio();
+            PresentNewestReadyFrame();
+            Render();
+        }
+        finally
+        {
+            _pumping = false;
+        }
+    }
+
+    private void OnNativeMenuChanged()
+    {
+        ApplySettings();
+        SaveSettings();
+    }
+
+    /// <summary>
+    /// Rebuilds the bar so rows that come and go — the track list, mainly — follow the
+    /// settings. Labels and marks refresh themselves as each popup opens, so this only
+    /// runs between frames, never while a menu is up.
+    /// </summary>
+    private void RebuildNativeMenu()
+    {
+        _menuBarStale = false;
+        if (_menuBar is not { } previous || _nativeWindow == 0 || _inMenuLoop) return;
+
+        Win32MenuBar replacement;
+        try
+        {
+            replacement = new Win32MenuBar(_nativeWindow, Menus.Bar(BuildContext()), OnNativeMenuChanged);
+        }
+        catch (InvalidOperationException)
+        {
+            return;
+        }
+
+        // Attach first so the bar is replaced rather than removed and put back, which
+        // would resize the client area twice and make the picture jump.
+        if (!_settings.Video.Fullscreen) replacement.Attach();
+
+        _menuBar = replacement;
+        previous.Dispose();
     }
 
     private uint OpenAudio(AudioSpec* want, AudioSpec* have)
@@ -139,6 +365,8 @@ public sealed unsafe class PlayerWindow : IDisposable
 
         while (_running)
         {
+            if (_menuBarStale) RebuildNativeMenu();
+
             PumpEvents();
             TopUpAudio();
             PresentNewestReadyFrame();
@@ -168,16 +396,22 @@ public sealed unsafe class PlayerWindow : IDisposable
 
         CreateVideoTexture();
         _effectWidth = 0; // force the grid overlay to be rebuilt
+        _menuBarStale = true;
+    }
+
+    private void SetHint(string name, string value)
+    {
+        var nameBytes = System.Text.Encoding.UTF8.GetBytes(name + '\0');
+        var valueBytes = System.Text.Encoding.UTF8.GetBytes(value + '\0');
+
+        fixed (byte* hint = nameBytes)
+        fixed (byte* setting = valueBytes)
+            _sdl.SetHint(hint, setting);
     }
 
     private void CreateVideoTexture()
     {
-        var hint = _settings.Video.Filter == ScaleFilter.Linear ? "linear" : "nearest";
-        var bytes = System.Text.Encoding.UTF8.GetBytes("SDL_RENDER_SCALE_QUALITY\0");
-        var value = System.Text.Encoding.UTF8.GetBytes(hint + '\0');
-        fixed (byte* name = bytes)
-        fixed (byte* quality = value)
-            _sdl.SetHint(name, quality);
+        SetHint("SDL_RENDER_SCALE_QUALITY", _settings.Video.Filter == ScaleFilter.Linear ? "linear" : "nearest");
 
         if (_videoTexture is not null) _sdl.DestroyTexture(_videoTexture);
 
@@ -568,7 +802,64 @@ public sealed unsafe class PlayerWindow : IDisposable
         ToggleFullscreen = () => SetFullscreen(!_settings.Video.Fullscreen),
         Quit = RequestQuit,
         Toast = message => _menu.Toast(message),
+        Perform = action => Perform(action, repeat: false),
+        SelectTrack = number =>
+        {
+            _player.SelectTrack(number);
+            _player.Play();
+            ResetAudio();
+            _menu.Close();
+            SaveSettings();
+        },
+        OpenPage = OpenMenu,
+        ShowInfo = ShowInfo,
+        OpenScreenshots = OpenScreenshotFolder,
     };
+
+    /// <summary>
+    /// Shows a block of text in a native dialog, falling back to an in-window page where
+    /// there is no dialog to put it in.
+    /// </summary>
+    private void ShowInfo(string title, string body)
+    {
+        if (OperatingSystem.IsWindows() && _nativeWindow != 0)
+        {
+            Win32.MessageBox(_nativeWindow, body, title, Win32.MbOk | Win32.MbIconInformation);
+            return;
+        }
+
+        OpenMenu(new MenuPage
+        {
+            Title = title,
+            Items = body.ReplaceLineEndings("\n").Split('\n')
+                .Select(line => (MenuItem)new MenuHeading { Label = line })
+                .ToArray(),
+        });
+    }
+
+    private void OpenScreenshotFolder()
+    {
+        try
+        {
+            var directory = ScreenshotDirectory();
+            Directory.CreateDirectory(directory);
+
+            using var _ = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = directory,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            _menu.Toast($"Could not open the folder: {ex.Message}", 4);
+        }
+    }
+
+    private string ScreenshotDirectory()
+        => string.IsNullOrWhiteSpace(_settings.Interface.ScreenshotDirectory)
+            ? Path.Combine(SettingsStore.Directory, "screenshots")
+            : _settings.Interface.ScreenshotDirectory;
 
     private void OpenMenu(MenuPage page)
     {
@@ -590,7 +881,12 @@ public sealed unsafe class PlayerWindow : IDisposable
     private void SetFullscreen(bool on)
     {
         _settings.Video.Fullscreen = on;
+
+        // A menu bar across the top of a full screen picture is neither use nor ornament.
+        if (on) _menuBar?.Detach();
         _sdl.SetWindowFullscreen(_window, on ? (uint)WindowFlags.FullscreenDesktop : 0);
+        if (!on) _menuBar?.Attach();
+
         SaveSettings();
     }
 
@@ -611,10 +907,7 @@ public sealed unsafe class PlayerWindow : IDisposable
     {
         try
         {
-            var directory = string.IsNullOrWhiteSpace(_settings.Interface.ScreenshotDirectory)
-                ? Path.Combine(SettingsStore.Directory, "screenshots")
-                : _settings.Interface.ScreenshotDirectory;
-
+            var directory = ScreenshotDirectory();
             Directory.CreateDirectory(directory);
 
             var name = $"{_discMap.Name}_t{_player.CurrentTrack:D2}_f{_player.CurrentFrame:D5}.png";
@@ -818,6 +1111,16 @@ public sealed unsafe class PlayerWindow : IDisposable
 
         _player.FrameDecoded -= OnFrameDecoded;
         _menu.Changed -= ApplySettings;
+
+        // Drop the bar before the window goes: the message hook reads this field and must
+        // find nothing once the handles behind it are gone.
+        var menuBar = _menuBar;
+        _menuBar = null;
+        if (_nativeWindow != 0) Win32.KillTimer(_nativeWindow, MenuLoopTimerId);
+        menuBar?.Dispose();
+        _messageHook?.Dispose();
+        _messageHook = null;
+        _nativeWindow = 0;
 
         if (_controller is not null) _sdl.GameControllerClose(_controller);
         if (_audioDevice != 0) _sdl.CloseAudioDevice(_audioDevice);

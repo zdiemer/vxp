@@ -191,6 +191,12 @@ public sealed class InterfaceSettings
     /// <summary>Dim the picture behind an open menu.</summary>
     public bool DimBehindMenu { get; set; } = true;
 
+    /// <summary>
+    /// Put a native menu bar on the window. Windows only, and ignored elsewhere, where
+    /// the in-window menu is the only one. Full screen hides the bar either way.
+    /// </summary>
+    public bool NativeMenuBar { get; set; } = true;
+
     /// <summary>Ask before quitting.</summary>
     public bool ConfirmQuit { get; set; }
 
