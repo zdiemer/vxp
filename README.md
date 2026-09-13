@@ -47,10 +47,10 @@ vxp "Some Title.cue"
 
 <div align="center">
 
-<img src="docs/media/picture.gif" alt="The opening of a VideoNow XP disc, decoded frame by frame" width="400">
+<img src="docs/media/games.png" alt="Frames from six retail VideoNow XP discs, decoded by vxp" width="860">
 
-<em>The opening of an XP disc, decoded straight off the CD stream: 144 x 80 pixels,<br>
-three 4-bit channels each, 8.93 frames a second.</em>
+<em>Teen Titans · Batman vs The Joker · Jimmy Neutron<br>
+Codename: Kids Next Door · My Life as a Teenage Robot (two titles)</em>
 
 </div>
 
@@ -83,6 +83,15 @@ Everything else falls out of that one fact:
 - Interactive titles are not a separate feature of the player. Branches are cut as
   ordinary tracks and the destinations are declared in each segment's header, so following
   a story is reading the disc rather than guessing at it.
+
+<div align="center">
+
+<img src="docs/media/picture.gif" alt="The opening of a VideoNow XP disc, decoded frame by frame" width="400">
+
+<em>A title sequence coming off the disc: 144 x 80 pixels, three 4-bit<br>
+channels each, 8.93 frames a second, and not a codec in sight.</em>
+
+</div>
 
 ## Requirements
 
@@ -156,65 +165,34 @@ Every one of these can be rebound, to the keyboard or to a game controller.
 A control can mean two things without conflict: the arrow keys work the transport during
 playback and move the highlight once a menu is open.
 
-### Menus
+### Menus and settings
 
-On Windows, `vxp` puts an ordinary application menu bar on the window: **File**,
-**Playback**, **Tracks**, **View** and **Help**. Alt and F10 open it, mnemonics and the
-mouse work as they do anywhere else, and playback carries on while a menu is up rather
-than freezing behind it.
+On Windows there is an ordinary application menu bar — **File**, **Playback**, **Tracks**,
+**View**, **Help** — opened with the mouse, Alt or F10, and playback carries on while a
+menu is up rather than freezing behind it. Escape opens the same pages drawn inside the
+picture instead; that one is what full screen, game controllers and the other platforms
+use, and it is the only place a control can be rebound, a menu bar having nowhere to catch
+a keypress. Both are built from one description of the pages, so a setting cannot appear
+differently in the two of them. `interface.nativeMenuBar` turns the bar off.
 
-Settings live where you would expect them, under **File → Settings**:
+What there is to change:
 
-<div align="center">
-<img src="docs/media/menu-settings.png" alt="The File menu, with the Settings submenu open" width="640">
-</div>
-
-Every transport action is on the **Playback** menu, each labelled with whatever control is
-currently bound to it — so the menu doubles as a reminder of the keys:
-
-<div align="center">
-<img src="docs/media/menu-playback.png" alt="The Playback menu, showing the control bound to each action" width="640">
-</div>
-
-**Tracks** lists the disc — grouped once a title runs to more than a popup can sensibly
-hold — with the running time and the mastering name out of the cue sheet, and a mark
-against whatever is playing:
-
-<div align="center">
-<img src="docs/media/menu-tracks.png" alt="The Tracks menu, listing the segments of a disc" width="640">
-</div>
-
-Check marks, radio marks and the values shown beside a submenu are filled in as each menu
-opens, so the bar always shows the settings as they actually stand.
-
-#### The in-window menu
-
-Escape opens the menu drawn inside the picture. It is the same set of pages as the bar,
-and it is what full screen, game controllers and the other platforms use — a menu bar has
-nowhere to catch a keypress, so it is also the only place a control can be rebound.
-
-<div align="center">
-<img src="docs/media/in-window.png" alt="The in-window menu, open over the picture" width="640">
-</div>
-
-Arrows move and adjust, Enter selects, Delete restores a setting to its default, Escape
-backs out.
-
-- **Tracks** — every segment with its running time, branch structure and a jump-to.
-- **Disc information** — format, timing and whether the title is interactive.
 - **Picture** — scaling mode, filtering, window scale, pixel aspect, brightness, contrast,
-  saturation, gamma, channel order, and simulated LCD grid and scanlines.
-- **Sound** — volume, mute, buffer size, background playback.
-- **Playback** — speed, fast-forward rate, seek step, loop mode, and how interactive
-  choices behave.
-- **On-screen display** — overlay mode, corner, timeout, text size and what it shows.
-- **Controls** — rebind anything. Enter captures the next control pressed, Left clears a
-  binding, Delete restores the default. Conflicts are reported rather than silently
-  overwriting.
+  saturation, gamma, channel order, and a simulated LCD grid and scanlines.
+- **Sound** — volume, mute, output buffer depth, and whether sound keeps playing when the
+  window loses focus.
+- **Playback** — speed, fast-forward rate, seek step, loop mode, play on load, skipping
+  empty tracks, and how interactive choices behave.
+- **On-screen display** — overlay mode, corner, timeout and text size, and whether the
+  overlay carries the track and time, the branch choices, and the frame rate.
+- **Controls** — every action rebindable, to the keyboard or to a game controller. Enter
+  captures the next control pressed, Left clears a binding, Delete restores the default;
+  conflicts are reported rather than silently overwritten.
+- **Tracks** — every segment with its running time, branch structure and a jump-to.
+- **Disc information** — format, timing, and whether the title is interactive.
 
-Settings are saved as you change them. Both menus are built from one description of the
-pages, so a setting cannot appear differently in the two of them. Set
-`interface.nativeMenuBar` to `false` for the in-window menu alone.
+Settings save as you change them, and every one of them is also readable and writable from
+the shell — see [Settings from the command line](#settings-from-the-command-line).
 
 ### Interactive titles
 
