@@ -11,6 +11,10 @@
 ![Interactive](https://img.shields.io/badge/branching-read_from_the_disc-8f7ae8?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-3f8f66?style=flat-square)
 
+<br>
+
+<img src="docs/media/player.png" alt="vxp playing a VideoNow XP disc" width="720">
+
 </div>
 
 # vxp
@@ -19,8 +23,8 @@ An emulator for the **VideoNow XP**, the Hasbro/Tiger personal video player that
 video off small pressed CDs.
 
 `vxp` mounts a disc image, decodes the picture and sound itself, and plays titles at the
-disc's true rate — with in-app menus, a track browser, rebindable controls, and a full
-command line for driving it headlessly.
+disc's true rate — with a native menu bar, a track browser, rebindable controls, and a
+full command line for driving it headlessly.
 
 ```
 vxp "Some Title.cue"
@@ -35,9 +39,19 @@ vxp "Some Title.cue"
 - **Interactive titles** — the branch table is read out of each segment's header, so
   decision points offer the destinations the disc actually declares. Take a wrong turn
   and you can step back through the segments you came from.
-- **Menus** — settings, a track browser and control rebinding, all in the window.
+- **Menus** — a real application menu bar on Windows, plus an in-window menu that works
+  everywhere. Settings, a track browser and control rebinding are in both.
 - **Headless CLI** — inspect, verify, export, graph the branch structure, and drive
   scripted playback with no window at all.
+
+<div align="center">
+
+<img src="docs/media/picture.gif" alt="The opening of a VideoNow XP disc, decoded frame by frame" width="432">
+
+<em>The opening of an XP disc, decoded straight off the CD stream: 144 x 80 pixels,<br>
+three 4-bit channels each, 8.93 frames a second.</em>
+
+</div>
 
 ## The disc is not a video file
 
@@ -138,8 +152,47 @@ playback and move the highlight once a menu is open.
 
 ### Menus
 
-Escape opens the menu. Arrows move and adjust, Enter selects, Delete restores a setting to
-its default, Escape backs out.
+On Windows, `vxp` puts an ordinary application menu bar on the window: **File**,
+**Playback**, **Tracks**, **View** and **Help**. Alt and F10 open it, mnemonics and the
+mouse work as they do anywhere else, and playback carries on while a menu is up rather
+than freezing behind it.
+
+Settings live where you would expect them, under **File → Settings**:
+
+<div align="center">
+<img src="docs/media/menu-settings.png" alt="The File menu, with the Settings submenu open" width="640">
+</div>
+
+Every transport action is on the **Playback** menu, each labelled with whatever control is
+currently bound to it — so the menu doubles as a reminder of the keys:
+
+<div align="center">
+<img src="docs/media/menu-playback.png" alt="The Playback menu, showing the control bound to each action" width="640">
+</div>
+
+**Tracks** lists the disc — grouped once a title runs to more than a popup can sensibly
+hold — with the running time and the mastering name out of the cue sheet, and a mark
+against whatever is playing:
+
+<div align="center">
+<img src="docs/media/menu-tracks.png" alt="The Tracks menu, listing the segments of a disc" width="640">
+</div>
+
+Check marks, radio marks and the values shown beside a submenu are filled in as each menu
+opens, so the bar always shows the settings as they actually stand.
+
+#### The in-window menu
+
+Escape opens the menu drawn inside the picture. It is the same set of pages as the bar,
+and it is what full screen, game controllers and the other platforms use — a menu bar has
+nowhere to catch a keypress, so it is also the only place a control can be rebound.
+
+<div align="center">
+<img src="docs/media/in-window.png" alt="The in-window menu, open over the picture" width="640">
+</div>
+
+Arrows move and adjust, Enter selects, Delete restores a setting to its default, Escape
+backs out.
 
 - **Tracks** — every segment with its running time, branch structure and a jump-to.
 - **Disc information** — format, timing and whether the title is interactive.
@@ -153,7 +206,24 @@ its default, Escape backs out.
   binding, Delete restores the default. Conflicts are reported rather than silently
   overwriting.
 
-Settings are saved as you change them.
+Settings are saved as you change them. Both menus are built from one description of the
+pages, so a setting cannot appear differently in the two of them. Set
+`interface.nativeMenuBar` to `false` for the in-window menu alone.
+
+### Interactive titles
+
+Branches are cut as ordinary tracks, and each segment's header declares where it can go.
+At a decision point `vxp` reads that table out of the disc and offers exactly the
+destinations it names:
+
+<div align="center">
+
+<img src="docs/media/playback.gif" alt="A Batman XP disc playing into a decision point, with the branches read off the disc" width="560">
+
+<em>Reaching a choice point on Batman vs The Joker. The four destinations<br>
+are read from the segment header, not guessed at.</em>
+
+</div>
 
 ## Inspecting a disc
 
@@ -253,7 +323,8 @@ Controls are written as `Space`, `Ctrl+Q`, `Shift+Left`, `F11`, `Pad:A`, `Pad:DP
 
 Settings live in `%APPDATA%\vxp` on Windows and `~/.config/vxp` elsewhere; `VXP_CONFIG_DIR`
 overrides that. Set `VXP_TRACE_INPUT=1` to log raw input events, which is useful when a
-binding is not doing what you expect.
+binding is not doing what you expect, or `VXP_TRACE_MENU=1` to log the window messages
+behind the native menu bar.
 
 ## How it works
 
@@ -267,6 +338,7 @@ src/Vxp             The vxp binary
   Config/           Settings model and storage
   Input/            Actions, bindings and input routing
   Ui/               Bitmap font, drawing surface, menus, status overlay
+    Native/         The same menu pages rendered as a Windows menu bar
   Video/            Picture adjustment, PNG and WAV writers
 tests/              Vxp.Core.Tests and Vxp.App.Tests
 ```

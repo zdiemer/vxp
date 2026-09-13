@@ -2,3 +2,4 @@
 *.sln text eol=crlf
 *.slnx text eol=crlf
 *.png binary
+*.gif binary
