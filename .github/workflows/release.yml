@@ -1,0 +1,83 @@
+# Build and publish the Windows binary for a tagged release.
+#
+# The build is self-contained and single-file, so the player runs on a machine with
+# no .NET runtime installed. SDL2.dll ships beside the exe rather than bundled into
+# it: Silk.NET finds its native library by probing the application directory, and a
+# loose DLL there needs nothing extracted at start-up.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and attach the artifact to"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: '1'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Check the tag matches the project version
+        shell: pwsh
+        run: |
+          # `vxp version` prints the assembly version, so a tag that disagrees with
+          # the project file ships a binary that misreports itself.
+          $tag = "${{ github.event.inputs.tag }}"
+          if (-not $tag) { $tag = "${{ github.ref_name }}" }
+          $want = $tag.TrimStart("v")
+          $have = ([xml](Get-Content src/Vxp/Vxp.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if ($want -ne $have) {
+            throw "tag $tag implies version $want, but src/Vxp/Vxp.csproj says $have"
+          }
+          "version $have matches tag $tag"
+
+      - name: Test
+        run: dotnet test -c Release
+
+      - name: Publish
+        run: dotnet publish src/Vxp -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:DebugType=none -o publish
+
+      - name: Package
+        shell: pwsh
+        run: |
+          foreach ($file in "publish/vxp.exe", "publish/SDL2.dll") {
+            if (-not (Test-Path $file)) { throw "missing $file" }
+          }
+          $version = & publish/vxp.exe version
+          "built: $version"
+
+          New-Item -ItemType Directory -Force staging | Out-Null
+          Copy-Item publish/vxp.exe, publish/SDL2.dll, README.md, LICENSE staging/
+          Compress-Archive -Path staging/* -DestinationPath vxp-windows-x86_64.zip
+          Get-FileHash vxp-windows-x86_64.zip -Algorithm SHA256
+
+      - name: Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.event.inputs.tag }}"
+          if (-not $tag) { $tag = "${{ github.ref_name }}" }
+          # `create` fails if the release already exists (a re-run, or a tag pushed
+          # after a manual release); fall back to uploading into it.
+          gh release create $tag vxp-windows-x86_64.zip --title $tag --generate-notes
+          if ($LASTEXITCODE -ne 0) {
+            gh release upload $tag vxp-windows-x86_64.zip --clobber
+          }
