@@ -160,6 +160,70 @@ public class SettingsStoreTests
             try { Directory.Delete(directory, recursive: true); } catch (IOException) { }
         }
     }
+
+    [Fact]
+    public void CommandLineOverridesAreNotWrittenBack()
+    {
+        WithConfigDirectory(() =>
+        {
+            var settings = new VxpSettings();
+            settings.Audio.Volume = 40;
+            SettingsStore.Save(settings);
+
+            var live = SettingsStore.Load();
+            var session = SettingsSession.Stored();
+            PlayCommand.ApplyOverrides(
+                CommandLine.Parse(["disc.cue", "--fullscreen", "--volume", "90", "--loop", "disc"]), live, session);
+
+            Assert.True(live.Video.Fullscreen);
+            Assert.Equal(90, live.Audio.Volume);
+
+            // The viewer changes something unrelated, and one overridden option, in the menus.
+            live.Video.Brightness = 12;
+            live.Emulation.Loop = LoopMode.Track;
+            session.Save(live);
+
+            var saved = SettingsStore.Load();
+            Assert.False(saved.Video.Fullscreen);
+            Assert.Equal(40, saved.Audio.Volume);
+            Assert.Equal(12, saved.Video.Brightness);
+            Assert.Equal(LoopMode.Track, saved.Emulation.Loop);
+
+            // Saving must not disturb the live values the window is still using.
+            Assert.True(live.Video.Fullscreen);
+            Assert.Equal(90, live.Audio.Volume);
+        });
+    }
+
+    [Fact]
+    public void ADetachedSessionNeverWrites()
+    {
+        WithConfigDirectory(() =>
+        {
+            var settings = new VxpSettings();
+            settings.Video.Brightness = 5;
+            SettingsSession.Detached().Save(settings);
+
+            Assert.False(File.Exists(SettingsStore.FilePath));
+        });
+    }
+
+    private static void WithConfigDirectory(Action body)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "vxp-tests", Guid.NewGuid().ToString("N"));
+        var previous = Environment.GetEnvironmentVariable("VXP_CONFIG_DIR");
+        Environment.SetEnvironmentVariable("VXP_CONFIG_DIR", directory);
+
+        try
+        {
+            body();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("VXP_CONFIG_DIR", previous);
+            try { Directory.Delete(directory, recursive: true); } catch (IOException) { }
+        }
+    }
 }
 
 public class CommandLineTests
@@ -195,6 +259,17 @@ public class CommandLineTests
 
         Assert.True(args.Has("fullscreen"));
         Assert.Equal(3, args.Int("scale", 0));
+    }
+
+    [Fact]
+    public void KnownFlagsDoNotSwallowTheDiscPath()
+    {
+        var args = CommandLine.Parse(["--fullscreen", "--no-config", "disc.cue", "--mute"]);
+
+        Assert.Equal(["disc.cue"], args.Positional);
+        Assert.True(args.Has("fullscreen"));
+        Assert.True(args.Has("no-config"));
+        Assert.True(args.Has("mute"));
     }
 
     [Fact]

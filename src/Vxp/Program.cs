@@ -1,3 +1,4 @@
+using Vxp;
 using Vxp.Cli;
 
 if (args.Length == 0)
@@ -7,7 +8,18 @@ if (args.Length == 0)
 }
 
 var command = args[0].ToLowerInvariant();
-var rest = CommandLine.Parse(args[1..]);
+
+// "vxp disc.cue --fullscreen" names no command, so the whole line is the play command's.
+// Parsing it once, here, means the unknown-option warning below reads the same parse the
+// command did rather than a second one nothing looked at.
+string[] commands =
+[
+    "play", "info", "tracks", "map", "graph", "headers", "verify", "export", "frame", "audio",
+    "run", "config", "bind", "help", "-h", "--help", "version", "--version",
+];
+
+var named = commands.Contains(command);
+var rest = CommandLine.Parse(named ? args[1..] : args);
 
 try
 {
@@ -30,7 +42,7 @@ try
         "version" or "--version" => Usage.Version(),
 
         // Anything else is taken as a disc to play, so "vxp disc.cue" just works.
-        _ => PlayCommand.Run(CommandLine.Parse(args)),
+        _ => PlayCommand.Run(rest),
     };
 
     foreach (var unknown in rest.Unrecognised())
@@ -38,7 +50,7 @@ try
 
     return exitCode;
 }
-catch (Exception ex) when (ex is ArgumentException or FileNotFoundException or InvalidDataException or IOException)
+catch (Exception ex) when (ex is ArgumentException or FileNotFoundException or InvalidDataException or IOException or SdlException)
 {
     Console.Error.WriteLine($"vxp: {ex.Message}");
     return 1;
@@ -63,17 +75,20 @@ internal static class Usage
               vxp <disc.cue> [options]         Play a disc.
               vxp play <disc.cue> [options]    The same, spelled out.
 
+              Anywhere a <disc.cue> is taken, a .zip holding the cue sheet and its
+              tracks works too. Options for this run are not saved.
+
                 --track N          Start on this track.
                 --frame N          Start at this frame of that track.
                 --scale N          Window scale factor. Default comes from settings.
-                --fullscreen       Start full screen.
+                --fullscreen       Start full screen. --windowed does the opposite.
                 --speed N          Playback rate as a percentage, 25 to 800.
                 --loop MODE        none, track or disc.
                 --navigation MODE  discOrder or followHeader.
                 --choice-timeout M firstBranch, discOrder or wait.
                 --mute             Start silent.
                 --volume N         Volume, 0 to 100.
-                --no-config        Ignore the settings file and use defaults.
+                --no-config        Use defaults; neither read nor write the settings file.
 
             INSPECTING
               vxp info <disc.cue> [--json]     Format, timing and the track list.

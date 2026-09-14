@@ -36,12 +36,15 @@ public sealed class InputMap
         Bind(InputAction.SpeedReset, Binding.Key(Key("0")));
         Bind(InputAction.ToggleLoop, Binding.Key(Key("L")));
 
-        Bind(InputAction.Choice1, Binding.Key(Key("1")));
-        Bind(InputAction.Choice2, Binding.Key(Key("2")));
-        Bind(InputAction.Choice3, Binding.Key(Key("3")));
-        Bind(InputAction.Choice4, Binding.Key(Key("4")));
-        Bind(InputAction.Choice5, Binding.Key(Key("5")));
-        Bind(InputAction.Choice6, Binding.Key(Key("6")));
+        // The discs mapped so far offer at most four branches, so the D-pad covers the
+        // choices a pad player meets; X and Y reach the last two slots the header has room for. The D-pad
+        // is also menu navigation, which InputRouter keeps apart by whether a menu is open.
+        Bind(InputAction.Choice1, Binding.Key(Key("1")), Binding.Button(ControllerButton.DPadUp));
+        Bind(InputAction.Choice2, Binding.Key(Key("2")), Binding.Button(ControllerButton.DPadRight));
+        Bind(InputAction.Choice3, Binding.Key(Key("3")), Binding.Button(ControllerButton.DPadDown));
+        Bind(InputAction.Choice4, Binding.Key(Key("4")), Binding.Button(ControllerButton.DPadLeft));
+        Bind(InputAction.Choice5, Binding.Key(Key("5")), Binding.Button(ControllerButton.X));
+        Bind(InputAction.Choice6, Binding.Key(Key("6")), Binding.Button(ControllerButton.Y));
 
         Bind(InputAction.VolumeUp, Binding.Key(Key("Up")));
         Bind(InputAction.VolumeDown, Binding.Key(Key("Down")));
@@ -64,7 +67,7 @@ public sealed class InputMap
         Bind(InputAction.MenuPageDown, Binding.Key(Key("PageDown")));
         Bind(InputAction.MenuResetItem, Binding.Key(Key("Delete")), Binding.Button(ControllerButton.Y));
 
-        Bind(InputAction.Quit, Binding.Key(Key("Q"), KeyModifiers.Control));
+        Bind(InputAction.Quit, Binding.Key(Key("Q"), KeyModifiers.Control), Binding.Button(ControllerButton.Guide));
 
         return map;
     }

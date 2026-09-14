@@ -12,8 +12,10 @@ public static class PlayCommand
     {
         var cuePath = args.RequireCue();
 
-        var settings = args.Has("no-config") ? new VxpSettings() : SettingsStore.Load();
-        ApplyOverrides(args, settings);
+        var detached = args.Has("no-config");
+        var settings = detached ? new VxpSettings() : SettingsStore.Load();
+        var session = detached ? SettingsSession.Detached() : SettingsSession.Stored();
+        ApplyOverrides(args, settings, session);
 
         using var disc = DiscImage.Open(cuePath);
         using var player = new VideoNowPlayer(disc);
@@ -21,13 +23,14 @@ public static class PlayCommand
         if (args.Int("track") is { } track) player.SelectTrack(track);
         if (args.Int("frame") is { } frame) player.SeekToFrame(frame);
 
-        if (!args.Has("no-config"))
-        {
-            settings.RecordRecentDisc(cuePath);
-            TrySave(settings);
-        }
+        // Only a zip needs this: its tracks are decompressed ahead of the branches that
+        // will want them, so a jump does not stall on the archive.
+        disc.PrecacheInBackground();
 
-        using var window = new PlayerWindow(player, settings, settings.BuildInputMap());
+        settings.RecordRecentDisc(cuePath);
+        TrySave(session, settings);
+
+        using var window = new PlayerWindow(player, settings, settings.BuildInputMap(), session);
         window.Run();
         return 0;
     }
@@ -36,36 +39,36 @@ public static class PlayCommand
     /// Applies command-line overrides on top of the stored settings, so a one-off run can
     /// differ without disturbing what is saved.
     /// </summary>
-    private static void ApplyOverrides(CommandLine args, VxpSettings settings)
+    public static void ApplyOverrides(CommandLine args, VxpSettings settings, SettingsSession session)
     {
-        if (args.Int("scale") is { } scale) settings.Video.WindowScale = scale;
-        if (args.Has("fullscreen")) settings.Video.Fullscreen = true;
-        if (args.Has("windowed")) settings.Video.Fullscreen = false;
-        if (args.Int("volume") is { } volume) settings.Audio.Volume = Math.Clamp(volume, 0, 100);
-        if (args.Has("mute")) settings.Audio.Muted = true;
-        if (args.Int("speed") is { } speed) settings.Emulation.SpeedPercent = Math.Clamp(speed, 25, 800);
+        if (args.Int("scale") is { } scale) session.Override(settings, "video.windowScale", scale);
+        if (args.Has("fullscreen")) session.Override(settings, "video.fullscreen", true);
+        if (args.Has("windowed")) session.Override(settings, "video.fullscreen", false);
+        if (args.Int("volume") is { } volume) session.Override(settings, "audio.volume", Math.Clamp(volume, 0, 100));
+        if (args.Has("mute")) session.Override(settings, "audio.muted", true);
+        if (args.Int("speed") is { } speed) session.Override(settings, "emulation.speedPercent", Math.Clamp(speed, 25, 800));
 
         if (args.Value("loop") is { } loop && Enum.TryParse<LoopMode>(loop, ignoreCase: true, out var loopMode))
-            settings.Emulation.Loop = loopMode;
+            session.Override(settings, "emulation.loop", loopMode);
 
         if (args.Value("navigation") is { } navigation
             && Enum.TryParse<NavigationPolicy>(navigation, ignoreCase: true, out var policy))
         {
-            settings.Emulation.Navigation = policy;
+            session.Override(settings, "emulation.navigation", policy);
         }
 
         if (args.Value("choice-timeout") is { } timeout
             && Enum.TryParse<ChoiceTimeout>(timeout, ignoreCase: true, out var choiceTimeout))
         {
-            settings.Emulation.ChoiceTimeout = choiceTimeout;
+            session.Override(settings, "emulation.choiceTimeout", choiceTimeout);
         }
     }
 
-    private static void TrySave(VxpSettings settings)
+    private static void TrySave(SettingsSession session, VxpSettings settings)
     {
         try
         {
-            SettingsStore.Save(settings);
+            session.Save(settings);
         }
         catch (IOException)
         {

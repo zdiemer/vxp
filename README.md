@@ -98,6 +98,10 @@ channels each, 8.93 frames a second, and not a codec in sight.</em>
 - [.NET SDK 8.0 or later](https://dotnet.microsoft.com/download)
 - SDL2, which arrives through NuGet on Windows, macOS and Linux
 
+Tagged releases carry a Windows build, `vxp-windows-x86_64.zip`, that needs neither: it is a
+self-contained `vxp.exe` with `SDL2.dll` beside it. Pushing a `v*` tag that matches
+`<Version>` in `src/Vxp/Vxp.csproj` builds and publishes it.
+
 ## Building
 
 ```sh
@@ -110,14 +114,19 @@ The binary lands in `src/Vxp/bin/Release/net8.0/`.
 ## Discs
 
 `vxp` reads the cue-sheet-plus-binary images that CD ripping tools produce, in either the
-one-file-per-track or single-file layout. Point it at the `.cue`.
+one-file-per-track or single-file layout. Point it at the `.cue`, or at a `.zip` holding
+the cue sheet and its tracks, the way Redump sets are distributed.
+
+A zip is read in place and never modified. Tracks are decompressed only as far as playback
+reaches, into temporary files that are deleted when `vxp` exits (or is killed), and the
+rest of the disc is decompressed in the background so a branch never waits on the archive.
 
 No disc images are included in this repository, and none are needed to build or test it.
 
 ## Playing
 
 ```
-vxp <disc.cue> [options]
+vxp <disc.cue|disc.zip> [options]
 ```
 
 | Option | Effect |
@@ -132,10 +141,12 @@ vxp <disc.cue> [options]
 | `--loop MODE` | `none`, `track` or `disc` |
 | `--navigation MODE` | `discOrder` or `followHeader` |
 | `--choice-timeout MODE` | `firstBranch`, `discOrder` or `wait` |
-| `--no-config` | Ignore the settings file and use defaults |
+| `--no-config` | Ignore the settings file and use defaults; nothing is saved |
 
-Command-line options override the saved settings for that run without changing what is
-stored.
+Options may come before or after the disc path. They override the saved settings for that
+run without changing what is stored: a launcher that always passes `--fullscreen` leaves a
+later windowed run windowed. An overridden setting the viewer then changes in the menus is
+saved as they left it.
 
 ### Default controls
 
@@ -162,8 +173,24 @@ Every one of these can be rebound, to the keyboard or to a game controller.
 | Backspace | Stop and rewind |
 | Ctrl + Q | Quit |
 
-A control can mean two things without conflict: the arrow keys work the transport during
-playback and move the highlight once a menu is open.
+| Controller | Action |
+|------------|--------|
+| A | Play / pause |
+| B | Stop and rewind |
+| D-pad up / right / down / left | Take branch 1 / 2 / 3 / 4 |
+| X / Y | Take branch 5 / 6 |
+| LB / RB | Previous / next track |
+| RT (hold) | Fast forward |
+| Start | Open the menu |
+| Back | Track browser |
+| Guide | Quit |
+
+A control can mean two things without conflict: the arrow keys and the D-pad work the
+player during playback and move the highlight once a menu is open.
+
+The first connected SDL game controller is used. Extra controller mappings can be loaded
+with SDL's own `SDL_GAMECONTROLLERCONFIG_FILE` environment variable. Full screen hides the
+mouse pointer.
 
 ### Menus and settings
 

@@ -75,6 +75,21 @@ public sealed class SyntheticDiscFile : IDisposable
         return new SyntheticDiscFile(directory, cuePath);
     }
 
+    /// <summary>
+    /// Packs the cue sheet and track files into a zip beside them, laid out flat the way
+    /// Redump sets ship, and returns its path.
+    /// </summary>
+    public string Zip(string name = "disc.zip")
+    {
+        var zipPath = Path.Combine(Directory, name);
+
+        using var archive = System.IO.Compression.ZipFile.Open(zipPath, System.IO.Compression.ZipArchiveMode.Create);
+        foreach (var file in System.IO.Directory.EnumerateFiles(Directory).Where(f => f != zipPath).Order())
+            System.IO.Compression.ZipFileExtensions.CreateEntryFromFile(archive, file, Path.GetFileName(file));
+
+        return zipPath;
+    }
+
     private static byte[] BuildFrame(TrackSpec spec, int frameIndex, FrameLayout layout)
     {
         var registers = new Dictionary<int, byte>

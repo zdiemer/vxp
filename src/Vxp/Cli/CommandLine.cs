@@ -20,8 +20,20 @@ public sealed class CommandLine
     public IReadOnlyList<string> Positional => _positional;
 
     /// <summary>
+    /// Options that never take a value. Without this list <c>--fullscreen disc.cue</c>
+    /// would read the disc path as the flag's value, and a launcher that puts its flags
+    /// first would fail with no disc.
+    /// </summary>
+    private static readonly HashSet<string> Flags = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "fullscreen", "windowed", "mute", "no-config", "json", "playable", "all", "deep",
+        "no-audio", "no-video",
+    };
+
+    /// <summary>
     /// Parses <paramref name="args"/>. An option is any argument starting with <c>-</c>;
-    /// it takes the next argument as its value unless that is another option.
+    /// it takes the next argument as its value unless that is another option or the
+    /// option is a known flag.
     /// </summary>
     public static CommandLine Parse(IEnumerable<string> args)
     {
@@ -39,6 +51,11 @@ public sealed class CommandLine
                 if (equals >= 0)
                 {
                     line._options[name[..equals]] = name[(equals + 1)..];
+                    pending = null;
+                }
+                else if (Flags.Contains(name))
+                {
+                    line._options[name] = null;
                     pending = null;
                 }
                 else
@@ -109,14 +126,15 @@ public sealed class CommandLine
     public bool Json => Has("json");
 
     /// <summary>
-    /// The cue sheet path, taken from the first positional argument.
+    /// The disc path — a cue sheet or a <c>.zip</c> holding one — taken from the first
+    /// positional argument.
     /// </summary>
     /// <exception cref="ArgumentException">No path was given.</exception>
     /// <exception cref="FileNotFoundException">The path does not exist.</exception>
     public string RequireCue(int index = 0)
     {
-        var path = At(index) ?? throw new ArgumentException("A .cue file path is required.");
-        if (!File.Exists(path)) throw new FileNotFoundException($"Cue sheet not found: {path}");
+        var path = At(index) ?? throw new ArgumentException("A .cue or .zip disc path is required.");
+        if (!File.Exists(path)) throw new FileNotFoundException($"Disc not found: {path}");
         return path;
     }
 

@@ -32,6 +32,7 @@ public sealed unsafe class PlayerWindow : IDisposable
     private readonly VideoNowPlayer _player;
     private readonly VxpSettings _settings;
     private readonly InputMap _input;
+    private readonly SettingsSession _session;
     private readonly DiscMap _discMap;
 
     private readonly Sdl _sdl;
@@ -79,18 +80,23 @@ public sealed unsafe class PlayerWindow : IDisposable
     private readonly record struct PendingFrame(long StartSample, byte[] Rgba);
 
     /// <summary>Creates the window and opens the audio device.</summary>
-    public PlayerWindow(VideoNowPlayer player, VxpSettings settings, InputMap input)
+    /// <param name="player">The disc to play.</param>
+    /// <param name="settings">Live settings; the menus change them in place.</param>
+    /// <param name="input">The binding table.</param>
+    /// <param name="session">What saving writes back, and whether it writes at all.</param>
+    public PlayerWindow(VideoNowPlayer player, VxpSettings settings, InputMap input, SettingsSession session)
     {
         _player = player;
         _settings = settings;
         _input = input;
+        _session = session;
         _discMap = DiscMap.Build(player.Disc);
         _adjust = PictureAdjustment.FromSettings(settings.Video);
         _displayFrame = (byte[])player.Framebuffer.Clone();
 
         _sdl = Sdl.GetApi();
         if (_sdl.Init(Sdl.InitVideo | Sdl.InitAudio | Sdl.InitGamecontroller) != 0)
-            throw new InvalidOperationException($"SDL_Init failed: {_sdl.GetErrorS()}");
+            throw new SdlException($"SDL_Init failed: {_sdl.GetErrorS()}");
 
         // SDL swallows Alt and F10 so games can use them, which would leave a native menu
         // bar reachable only with the mouse. The menu matters more here than Alt does.
@@ -105,14 +111,14 @@ public sealed unsafe class PlayerWindow : IDisposable
             (uint)(WindowFlags.Shown | WindowFlags.Resizable));
 
         if (_window is null)
-            throw new InvalidOperationException($"SDL_CreateWindow failed: {_sdl.GetErrorS()}");
+            throw new SdlException($"SDL_CreateWindow failed: {_sdl.GetErrorS()}");
 
         var rendererFlags = (uint)RendererFlags.Accelerated;
         if (settings.Video.VSync) rendererFlags |= (uint)RendererFlags.Presentvsync;
 
         _renderer = _sdl.CreateRenderer(_window, -1, rendererFlags);
         if (_renderer is null) _renderer = _sdl.CreateRenderer(_window, -1, (uint)RendererFlags.Software);
-        if (_renderer is null) throw new InvalidOperationException($"SDL_CreateRenderer failed: {_sdl.GetErrorS()}");
+        if (_renderer is null) throw new SdlException($"SDL_CreateRenderer failed: {_sdl.GetErrorS()}");
 
         CreateVideoTexture();
 
@@ -127,7 +133,7 @@ public sealed unsafe class PlayerWindow : IDisposable
         AudioSpec have;
         _audioDevice = OpenAudio(&want, &have);
         if (_audioDevice == 0)
-            throw new InvalidOperationException($"SDL_OpenAudioDevice failed: {_sdl.GetErrorS()}");
+            throw new SdlException($"SDL_OpenAudioDevice failed: {_sdl.GetErrorS()}");
 
         _sdl.PauseAudioDevice(_audioDevice, 0);
         OpenController();
@@ -899,6 +905,10 @@ public sealed unsafe class PlayerWindow : IDisposable
         _sdl.SetWindowFullscreen(_window, on ? (uint)WindowFlags.FullscreenDesktop : 0);
         if (!on) _menuBar?.Attach();
 
+        // Nothing in the player is driven by the mouse, so full screen hides the pointer
+        // rather than leave it parked over the picture.
+        _sdl.ShowCursor(on ? 0 : 1);
+
         SaveSettings();
     }
 
@@ -907,7 +917,7 @@ public sealed unsafe class PlayerWindow : IDisposable
         try
         {
             _settings.StoreInputMap(_input);
-            SettingsStore.Save(_settings);
+            _session.Save(_settings);
         }
         catch (IOException)
         {

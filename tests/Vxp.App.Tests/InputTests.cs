@@ -249,6 +249,31 @@ public class InputMapTests
     }
 
     [Fact]
+    public void EveryChoiceAndQuitIsReachableFromAController()
+    {
+        var map = InputMap.CreateDefault();
+
+        foreach (var action in new[]
+                 {
+                     InputAction.Choice1, InputAction.Choice2, InputAction.Choice3,
+                     InputAction.Choice4, InputAction.Choice5, InputAction.Choice6, InputAction.Quit,
+                 })
+        {
+            Assert.Contains(map.BindingsFor(action), b => b.Kind == BindingKind.ControllerButton);
+        }
+    }
+
+    [Fact]
+    public void TheDPadTakesChoicesWhilePlayingAndNavigatesMenus()
+    {
+        var map = InputMap.CreateDefault();
+        var up = map.MatchButton((int)ControllerButton.DPadUp);
+
+        Assert.Equal(InputAction.Choice1, InputRouter.Resolve(up, menuOpen: false));
+        Assert.Equal(InputAction.MenuUp, InputRouter.Resolve(up, menuOpen: true));
+    }
+
+    [Fact]
     public void AxisMatchingRespectsDirection()
     {
         var map = InputMap.CreateDefault();
