@@ -51,6 +51,12 @@ public sealed unsafe class PlayerWindow : IDisposable
 
     private readonly Queue<PendingFrame> _pending = new();
     private readonly object _pendingGate = new();
+    /// <summary>
+    /// The output device's rate: an XP player reads at twice CD speed, so this is where the
+    /// disc's sound lands at normal speed and the resampler has nothing to do.
+    /// </summary>
+    private const int DeviceSampleRate = 2 * FrameLayout.AudioSampleRate;
+
     private readonly short[] _mixBuffer = new short[2048];
     private readonly byte[] _displayRgba = new byte[VideoDecoder.RgbaFrameBytes];
     private readonly HashSet<int> _heldAxes = new();
@@ -141,7 +147,7 @@ public sealed unsafe class PlayerWindow : IDisposable
 
         var want = new AudioSpec
         {
-            Freq = FrameLayout.AudioSampleRate,
+            Freq = DeviceSampleRate,
             Format = AudioS16Lsb,
             Channels = 1,
             Samples = 1024,
@@ -625,7 +631,7 @@ public sealed unsafe class PlayerWindow : IDisposable
         if (_player is null) return;
         if (!_focused && !_settings.Audio.PlayInBackground) return;
 
-        var target = (long)(_settings.Audio.BufferMilliseconds / 1000.0 * FrameLayout.AudioSampleRate) * sizeof(short);
+        var target = (long)(_settings.Audio.BufferMilliseconds / 1000.0 * DeviceSampleRate) * sizeof(short);
         var guard = 0;
 
         while (_sdl.GetQueuedAudioSize(_audioDevice) < target && guard++ < 64)
@@ -1001,11 +1007,11 @@ public sealed unsafe class PlayerWindow : IDisposable
     }
 
     /// <summary>
-    /// The player speed for a percentage of normal. The device runs at the byte-derived
-    /// rate, so the configured disc rate is folded in as a resampling ratio.
+    /// The player speed for a percentage of normal. The device runs at a fixed rate, so
+    /// the configured disc rate is folded in as a resampling ratio.
     /// </summary>
     private double PlaybackRate(int percent)
-        => percent / 100.0 * _settings.Emulation.DiscSampleRate / FrameLayout.AudioSampleRate;
+        => percent / 100.0 * _settings.Emulation.DiscSampleRate / DeviceSampleRate;
 
     private MenuContext BuildContext() => new()
     {
@@ -1306,7 +1312,7 @@ public sealed unsafe class PlayerWindow : IDisposable
         if (showStatus)
         {
             var queuedMs = (int)(_sdl.GetQueuedAudioSize(_audioDevice) / sizeof(short)
-                                 * 1000.0 / FrameLayout.AudioSampleRate);
+                                 * 1000.0 / DeviceSampleRate);
 
             _overlay.Draw(_canvas, scale, _player, _settings,
                 new HostStatus(_settings.Audio.Volume, _settings.Audio.Muted, _measuredFps, queuedMs));

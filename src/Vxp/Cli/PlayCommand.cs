@@ -68,7 +68,7 @@ public static class PlayCommand
         if (args.Has("windowed")) session.Override(settings, "video.fullscreen", false);
         if (args.Int("volume") is { } volume) session.Override(settings, "audio.volume", Math.Clamp(volume, 0, 100));
         if (args.Has("mute")) session.Override(settings, "audio.muted", true);
-        if (args.Int("rate") is { } rate) session.Override(settings, "emulation.discSampleRate", Math.Clamp(rate, 16000, 19000));
+        if (args.Int("rate") is { } rate) session.Override(settings, "emulation.discSampleRate", Math.Clamp(rate, 16000, 40000));
         if (args.Int("speed") is { } speed) session.Override(settings, "emulation.speedPercent", Math.Clamp(speed, 25, 800));
 
         if (args.Value("loop") is { } loop && Enum.TryParse<LoopMode>(loop, ignoreCase: true, out var loopMode))

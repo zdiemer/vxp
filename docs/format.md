@@ -84,16 +84,18 @@ boundary, but `vxp` searches for the sync word rather than assuming it.
 Unsigned 8-bit mono PCM at 17 640 Hz. Silence is `0x80`. There is no compression and no
 in-band control data.
 
-> **Open question: the playback rate.** 17 640 Hz is what one-times CD speed gives, but
-> it may not be what the XP hardware plays at. A Color frame (19 600 B) lasts exactly
-> 1/9 s at that rate; an XP frame (19 760 B) does so only if the drive runs 0.8 % faster,
-> which gives **17 784 Hz**. The menu and game music on all six retail XP discs measures
-> 10–14 cents flat at 17 640 Hz, close to the 14 cents 0.8 % predicts. The episode music
-> instead measures sharp, but so do the studio's own uploads of the same themes, so it
-> cannot serve as a pitch reference. Played side by side with other copies of the episodes,
-> 17 640 Hz sounds slow. `vxp` plays at 17 784 Hz by default, and the rate is the
-> `emulation.discSampleRate` setting (`--rate`) until hardware settles it. Exports still
-> write 17 640 Hz WAV headers, as that is the rate the bytes arrive at.
+> **The XP plays at twice CD speed.** 17 640 Hz is the rate at one-times CD speed, and
+> at that rate the retail XP discs run twice as long as they should: the two cartoon
+> segments on the Jimmy Neutron disc (tracks 4–10) come to 45.2 minutes, where the
+> broadcast segments are about 11 minutes each. At double speed, **35 280 Hz** and
+> **17.854 fps**, they come to 22.6 minutes, and the sound is right by ear. Pitch alone
+> could never show this, since a factor of two is exactly one octave: at 35 280 Hz the
+> theme music sits within a few cents of the studio's own uploads, as it did at 17 640.
+> A rate 0.8 % higher (35 568 Hz, an even 18 fps) would put it 14 cents off them, so
+> exactly 2x is preferred. The Color figures below are unchecked against this.
+> `vxp` plays at 35 280 Hz by default, and the rate is the `emulation.discSampleRate`
+> setting (`--rate`) until hardware confirms it. Exports and the durations `vxp info`
+> reports are still at the one-times rate.
 
 Note that PVDTools writes its WAV header as two channels; that appears to be a slip, and
 its own header fields are internally inconsistent about it. Sample-to-sample correlation

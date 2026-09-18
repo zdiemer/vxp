@@ -164,11 +164,11 @@ public sealed class EmulationSettings
     /// The rate the disc's sound is played at, in samples per second; the picture follows it.
     /// </summary>
     /// <remarks>
-    /// The byte rate gives 17 640 Hz, but an XP frame lasts exactly 1/9 s, as a Color frame
-    /// does, only at 17 784 Hz, and the menu music on every disc sits flat by that same
-    /// 0.8 %. Neither figure is proven, so this stays adjustable.
+    /// One-times CD speed would give 17 640 Hz, but the retail XP discs only run to the
+    /// length of their episodes at twice that, 35 280 Hz. It stays adjustable until
+    /// hardware pins it down.
     /// </remarks>
-    public int DiscSampleRate { get; set; } = 17784;
+    public int DiscSampleRate { get; set; } = 35280;
 
     /// <summary>Rate used while the fast-forward control is held, as a percentage.</summary>
     public int FastForwardPercent { get; set; } = 300;

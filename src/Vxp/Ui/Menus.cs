@@ -589,11 +589,11 @@ public static class Menus
                 new MenuNumber
                 {
                     Label = "Disc sample rate",
-                    Help = "What normal speed means. 17640 Hz follows from the byte rate; "
-                           + "17784 Hz gives XP an even 9 frames a second.",
+                    Help = "What normal speed means. 35280 Hz is twice CD speed, where the "
+                           + "episodes run to their broadcast length.",
                     Get = () => emulation.DiscSampleRate,
                     Set = v => emulation.DiscSampleRate = v,
-                    Minimum = 16000, Maximum = 19000, Step = 8, Default = 17784,
+                    Minimum = 16000, Maximum = 40000, Step = 40, Default = 35280,
                     Format = v => $"{v} Hz, {v / (double)FrameLayout.Xp.AudioBytes:0.000} fps",
                 },
                 new MenuNumber
