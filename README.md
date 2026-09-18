@@ -23,7 +23,7 @@ An emulator for the **VideoNow XP**, the Hasbro/Tiger personal video player that
 video off small pressed CDs.
 
 `vxp` mounts a disc image, decodes the picture and sound itself, and plays titles at the
-disc's true rate — with a native menu bar, a track browser, rebindable controls, and a
+disc's true rate, with a native menu bar, a track browser, rebindable controls, and a
 full command line for driving it headlessly.
 
 ```
@@ -33,16 +33,16 @@ vxp "Some Title.cue"
 ## What it does
 
 - **VideoNow XP and VideoNow Color** discs, detected automatically.
-- **Picture** — 144 x 80, three 4-bit channels per pixel, decoded natively and shown at
+- **Picture**: 144 x 80, three 4-bit channels per pixel, decoded natively and shown at
   the shape the panel showed it rather than the shape it is stored in.
-- **Sound** — 8-bit mono, in sync, played at twice CD speed, 35 280 Hz, by default (`--rate` to change).
-- **Transport** — play, pause, seek, frame step, variable speed, fast forward, loop.
-- **Interactive titles** — the branch table is read out of each segment's header, so
+- **Sound**: 8-bit mono, in sync, played at twice CD speed, 35 280 Hz, by default (`--rate` to change).
+- **Transport**: play, pause, seek, frame step, variable speed, fast forward, loop.
+- **Interactive titles**: the branch table is read out of each segment's header, so
   decision points offer the destinations the disc actually declares. Take a wrong turn
   and you can step back through the segments you came from.
-- **Menus** — a real application menu bar on Windows, plus an in-window menu that works
+- **Menus**: a real application menu bar on Windows, plus an in-window menu that works
   everywhere. Settings, a track browser and control rebinding are in both.
-- **Headless CLI** — inspect, verify, export, graph the branch structure, and drive
+- **Headless CLI**: inspect, verify, export, graph the branch structure, and drive
   scripted playback with no window at all.
 
 <div align="center">
@@ -54,37 +54,43 @@ Codename: Kids Next Door · My Life as a Teenage Robot (two titles)</em>
 
 </div>
 
-## The disc is not a video file
+## Compatibility
 
-A VideoNow disc is a physically small CD pressed as an **ordinary audio CD**: no
-filesystem, no container, no standard codec. The player reads raw 2352-byte CD-DA sectors
-and feeds them almost straight to an LCD controller and a DAC, so there is nothing here for
-a general-purpose media library to open. Decoding it is a few hundred lines, and `Vxp.Core`
-is those lines.
+These are the retail VideoNow XP discs `vxp` has been tested against. The XP library is
+larger than this, and other XP and Color discs should play, but have not been checked.
 
-Everything else falls out of that one fact:
+| Disc | Kind | Status |
+|------|------|--------|
+| The Batman: Batman vs The Joker | Interactive adventure | Playable |
+| Teen Titans: Tournament of Champions | Interactive adventure | Playable |
+| Codename: Kids Next Door: Operation R.O.B.B.E.R.S. & Operation U.T.O.P.I.A. | Episodes and quiz | Playable |
+| The Adventures of Jimmy Neutron, Boy Genius (Disc 2): See Jimmy Run & Trading Faces | Episodes and quiz | Playable |
+| My Life as a Teenage Robot: Return of the Raggedy Android & The Boy Who Cried 'Robot' | Episodes and quiz | Playable |
+| My Life as a Teenage Robot (Disc 3): It Came from Next Door & Pest Control | Episodes and quiz | Playable |
 
-- The stream is interleaved **nine video bytes to one audio byte**. A CD reads 176 400
-  bytes a second, so a tenth of the disc, 17 640 bytes a second, is sound. The XP reads
-  at twice CD speed, which is where the episodes run to their broadcast length, so its
-  sound plays at **35 280 Hz**.
-- Frames are a fixed size on disc, 19 760 bytes on XP and 19 600 on Color, both carrying
-  the same 144 x 80 picture. The frame rate is not stored anywhere; it is
-  `2 x 176 400 / 19 760` = **17.854 fps** on XP, arithmetic rather than metadata.
-- Which variant a disc is comes from **counting sync-word repeats** in the frame header:
-  24 means Color, 12 means XP.
-- That 144 x 80 is the shape of the *storage*, not of the picture. The panel's pixels are
-  appreciably taller than they are wide, so a frame drawn with square pixels comes out
-  about a third too wide; `vxp` puts it back at 4:3, which is what the titles were shot
-  at. The larger resolutions quoted elsewhere — 216 x 160, 240 x 160 — are counting 4-bit
-  colour samples rather than pixels, or are uncited; `docs/format.md` works through both.
-- Audio is therefore the honest master clock, and playback is clocked by it — the player
-  decodes exactly as many frames as the sound card consumes, so picture and sound cannot
-  drift apart. A headless run is the same loop with no sound card, which is what makes
-  scripted playback deterministic.
-- Interactive titles are not a separate feature of the player. Branches are cut as
-  ordinary tracks and the destinations are declared in each segment's header, so following
-  a story is reading the disc rather than guessing at it.
+Playable means the disc plays the way it was built to: menus, episodes, quizzes that keep
+score, and interactive stories that branch on your choices. If you have a disc that is not
+on this list, an issue with the `vxp verify` and `vxp map` output for it is very welcome.
+
+## VideoNow disc details
+
+A VideoNow disc is a small CD pressed as an **ordinary audio CD**, with no filesystem and
+no video codec. The player reads raw CD audio sectors and sends them almost straight to
+the screen and the speaker.
+
+- The stream interleaves **nine picture bytes to one sound byte**.
+- XP frames are 19 760 bytes and Color frames 19 600, both holding a **144 x 80** picture
+  at 4 bits per colour channel. Counting the sync-word repeats in a frame header tells the
+  two apart.
+- The XP reads at **twice CD speed**, so it plays **17.85 frames a second** with
+  **35 280 Hz** 8-bit mono sound.
+- The pixels are not square. `vxp` draws the picture at 4:3, the shape the cartoons were
+  made at.
+- Interactive titles are ordinary tracks. Each segment's header lists where it goes next
+  and where each button leads, so `vxp` follows the disc rather than guessing.
+
+[docs/format.md](docs/format.md) has the full write-up, with what is confirmed and what is
+still open.
 
 <div align="center">
 
@@ -146,11 +152,11 @@ vxp <disc.cue|disc.zip> [options]
 | `--volume N` | Volume, 0 to 100 |
 | `--mute` | Start silent |
 | `--loop MODE` | `none`, `track` or `disc` |
-| `--navigation MODE` | `discOrder` or `followHeader` |
+| `--navigation MODE` | `followHeader` (the default: go where the disc says) or `discOrder` |
 | `--choice-timeout MODE` | `wait` (the default: hold until a key is pressed), `firstBranch` or `discOrder` |
 | `--no-config` | Ignore the settings file and use defaults; nothing is saved |
 
-Run `vxp` with no disc — or double-click `vxp.exe` — and the player opens empty. Open a
+Run `vxp` with no disc, or double-click `vxp.exe`, and the player opens empty. Open a
 disc from there, or swap to another while one is playing, with **Ctrl + O** (File > Open
 Disc), the menu's **Recent discs**, or by dropping a `.cue`, `.zip` or `.bin` on the
 window. **Ctrl + W** ejects back to the empty player. A file that will not open says why in
@@ -211,8 +217,8 @@ mouse pointer.
 
 ### Menus and settings
 
-On Windows there is an ordinary application menu bar — **File**, **Playback**, **Tracks**,
-**View**, **Help** — opened with the mouse, Alt or F10, and playback carries on while a
+On Windows there is an ordinary application menu bar (**File**, **Playback**, **Tracks**,
+**View**, **Help**), opened with the mouse, Alt or F10, and playback carries on while a
 menu is up rather than freezing behind it. Escape opens the same pages drawn inside the
 picture instead; that one is what full screen, game controllers and the other platforms
 use, and it is the only place a control can be rebound, a menu bar having nowhere to catch
@@ -221,22 +227,22 @@ differently in the two of them. `interface.nativeMenuBar` turns the bar off.
 
 What there is to change:
 
-- **Picture** — scaling mode, filtering, window scale, pixel aspect, brightness, contrast,
+- **Picture**: scaling mode, filtering, window scale, pixel aspect, brightness, contrast,
   saturation, gamma, channel order, and a simulated LCD grid and scanlines.
-- **Sound** — volume, mute, output buffer depth, and whether sound keeps playing when the
+- **Sound**: volume, mute, output buffer depth, and whether sound keeps playing when the
   window loses focus.
-- **Playback** — speed, fast-forward rate, seek step, loop mode, play on load, skipping
+- **Playback**: speed, disc sample rate, fast-forward rate, seek step, loop mode, play on load, skipping
   empty tracks, and how interactive choices behave.
-- **On-screen display** — overlay mode, corner, timeout and text size, and whether the
+- **On-screen display**: overlay mode, corner, timeout and text size, and whether the
   overlay carries the track and time, the branch choices, and the frame rate.
-- **Controls** — every action rebindable, to the keyboard or to a game controller. Enter
+- **Controls**: every action rebindable, to the keyboard or to a game controller. Enter
   captures the next control pressed, Left clears a binding, Delete restores the default;
   conflicts are reported rather than silently overwritten.
-- **Tracks** — every segment with its running time, branch structure and a jump-to.
-- **Disc information** — format, timing, and whether the title is interactive.
+- **Tracks**: every segment with its running time, branch structure and a jump-to.
+- **Disc information**: format, timing, and whether the title is interactive.
 
 Settings save as you change them, and every one of them is also readable and writable from
-the shell — see [Settings from the command line](#settings-from-the-command-line).
+the shell; see [Settings from the command line](#settings-from-the-command-line).
 
 ### Interactive titles
 
@@ -411,15 +417,15 @@ it can be reused headlessly. The SDL front end is a host: it pulls PCM, puts pix
 screen and routes input, and holds no emulation logic of its own.
 
 The disc format, including the register map and the branch table, is written up in
-[docs/format.md](docs/format.md) — along with an explicit list of what is confirmed and
+[docs/format.md](docs/format.md), along with an explicit list of what is confirmed and
 what is still guesswork.
 
 ## Status
 
-Playback, sound, transport, menus and the command line are solid. The interactive model is
-good enough to navigate retail interactive titles, but parts of the segment header are
-still being worked out; `docs/format.md` says which. Black and white VideoNow discs are
-detected but not yet decoded.
+Every tested disc plays through as built, including the interactive stories and the
+scored quizzes. What is still open is listed in `docs/format.md`: whether Color discs also
+play at twice CD speed, and what a few rarely set header registers do. Black and white
+VideoNow discs are detected but not yet decoded.
 
 ## Credits
 
