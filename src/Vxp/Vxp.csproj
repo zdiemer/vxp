@@ -10,7 +10,7 @@
     <RootNamespace>Vxp</RootNamespace>
     <AssemblyName>vxp</AssemblyName>
     <!-- The release workflow refuses a tag that disagrees with this. -->
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
