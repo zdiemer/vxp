@@ -102,6 +102,10 @@ data.
 > A rate 0.8 % higher (35 568 Hz, an even 18 fps) would put it 14 cents off them, so
 > exactly 2x is preferred.
 >
+> A music disc settles it independently. On *Aly & AJ: No One* the music video (track 2,
+> 3 173 frames) runs **2:57.7** at 35 280 Hz. The released song runs 2:58. At 1x it would
+> be 5:55, and at an even 18 fps 2:56.3.
+>
 > `vxp` keeps the two apart: the stream facts (1976 audio bytes a frame, 17 640 a second
 > of disc at 1x) stay as they are, and a playback rate on top of them
 > (`FrameLayout.PlaybackSampleRate`, the stream rate times the variant's disc speed) is
@@ -111,8 +115,10 @@ data.
 > right speed. Live playback answers to the `emulation.discSampleRate` setting (`--rate`),
 > whose default is that same 35 280, so it can be trimmed until hardware confirms it.
 >
-> **Color is unchecked.** There is no Color disc in the corpus, so nothing says whether
-> the Color player reads at 1x or 2x. `vxp` keeps Color at one-times, 17 640 Hz and
+> **Color is unchecked.** No all-Color disc has been examined, so nothing says whether
+> the Color player reads at 1x or 2x. XP discs can mix the variants: the Aly & AJ disc's
+> end-of-disc clip (track 5, `eod.vn5`) is a Color-format track on an otherwise XP disc,
+> which suggests the XP player plays Color frames too, most likely at its own 2x. `vxp` keeps Color at one-times, 17 640 Hz and
 > 9 fps, and scales the live rate setting by the same proportion, until a Color disc
 > shows otherwise.
 
