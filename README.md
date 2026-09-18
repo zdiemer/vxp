@@ -49,10 +49,11 @@ vxp "Some Title.cue"
 
 <div align="center">
 
-<img src="docs/media/games.png" alt="Frames from six retail VideoNow XP discs, decoded by vxp" width="860">
+<img src="docs/media/games.png" alt="Frames from nine VideoNow discs, decoded by vxp: six XP titles, a VideoNow Color music video, a VideoNow Jr disc and a black and white disc" width="860">
 
 <em>Teen Titans · Batman vs The Joker · Jimmy Neutron<br>
-Codename: Kids Next Door · My Life as a Teenage Robot (two titles)</em>
+Codename: Kids Next Door · My Life as a Teenage Robot (two titles)<br>
+Aly & AJ (VideoNow Color) · Thomas & Friends (VideoNow Jr) · Rugrats (black and white)</em>
 
 </div>
 
