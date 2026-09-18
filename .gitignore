@@ -16,3 +16,6 @@ out/
 *.png
 *.mp4
 !docs/**/*.png
+
+# Agent worktrees
+.claude/worktrees/
