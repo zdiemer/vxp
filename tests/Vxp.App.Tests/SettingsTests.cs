@@ -18,6 +18,7 @@ public class SettingsStoreTests
         Assert.Contains("video.brightness", paths);
         Assert.Contains("audio.volume", paths);
         Assert.Contains("emulation.speedPercent", paths);
+        Assert.Contains("emulation.discSampleRate", paths);
         Assert.Contains("interface.overlay", paths);
     }
 

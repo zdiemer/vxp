@@ -565,7 +565,7 @@ public sealed unsafe class PlayerWindow : IDisposable
             _player.Timeout = _settings.Emulation.ChoiceTimeout;
             _player.Loop = _settings.Emulation.Loop;
 
-            if (!_fastForward) _player.Speed = _settings.Emulation.SpeedPercent / 100.0;
+            if (!_fastForward) _player.Speed = PlaybackRate(_settings.Emulation.SpeedPercent);
         }
 
         _adjust.Brightness = _settings.Video.Brightness;
@@ -997,10 +997,15 @@ public sealed unsafe class PlayerWindow : IDisposable
         if (_fastForward == on) return;
 
         _fastForward = on;
-        _player.Speed = on
-            ? _settings.Emulation.FastForwardPercent / 100.0
-            : _settings.Emulation.SpeedPercent / 100.0;
+        _player.Speed = PlaybackRate(on ? _settings.Emulation.FastForwardPercent : _settings.Emulation.SpeedPercent);
     }
+
+    /// <summary>
+    /// The player speed for a percentage of normal. The device runs at the byte-derived
+    /// rate, so the configured disc rate is folded in as a resampling ratio.
+    /// </summary>
+    private double PlaybackRate(int percent)
+        => percent / 100.0 * _settings.Emulation.DiscSampleRate / FrameLayout.AudioSampleRate;
 
     private MenuContext BuildContext() => new()
     {

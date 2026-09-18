@@ -85,6 +85,7 @@ internal static class Usage
                 --scale N          Window scale factor. Default comes from settings.
                 --fullscreen       Start full screen. --windowed does the opposite.
                 --speed N          Playback rate as a percentage, 25 to 800.
+                --rate HZ          Disc sample rate, 16000 to 19000. Default 17784.
                 --loop MODE        none, track or disc.
                 --navigation MODE  discOrder or followHeader.
                 --choice-timeout M firstBranch, discOrder or wait.

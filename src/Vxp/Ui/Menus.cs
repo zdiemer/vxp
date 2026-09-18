@@ -588,6 +588,16 @@ public static class Menus
                 SpeedItem(context),
                 new MenuNumber
                 {
+                    Label = "Disc sample rate",
+                    Help = "What normal speed means. 17640 Hz follows from the byte rate; "
+                           + "17784 Hz gives XP an even 9 frames a second.",
+                    Get = () => emulation.DiscSampleRate,
+                    Set = v => emulation.DiscSampleRate = v,
+                    Minimum = 16000, Maximum = 19000, Step = 8, Default = 17784,
+                    Format = v => $"{v} Hz, {v / (double)FrameLayout.Xp.AudioBytes:0.000} fps",
+                },
+                new MenuNumber
+                {
                     Label = "Fast forward speed",
                     Help = "Rate used while the fast-forward control is held.",
                     Get = () => emulation.FastForwardPercent,

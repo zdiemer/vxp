@@ -35,7 +35,7 @@ vxp "Some Title.cue"
 - **VideoNow XP and VideoNow Color** discs, detected automatically.
 - **Picture** — 144 x 80, three 4-bit channels per pixel, decoded natively and shown at
   the shape the panel showed it rather than the shape it is stored in.
-- **Sound** — 17 640 Hz mono, in sync and at full speed.
+- **Sound** — 8-bit mono, in sync, played at 17 784 Hz by default (`--rate` to change).
 - **Transport** — play, pause, seek, frame step, variable speed, fast forward, loop.
 - **Interactive titles** — the branch table is read out of each segment's header, so
   decision points offer the destinations the disc actually declares. Take a wrong turn
@@ -136,6 +136,7 @@ vxp <disc.cue|disc.zip> [options]
 | `--scale N` | Window scale factor |
 | `--fullscreen` / `--windowed` | Override the saved window mode |
 | `--speed N` | Playback rate as a percentage, 25 to 800 |
+| `--rate HZ` | Disc sample rate, 16000 to 19000 (default 17784) |
 | `--volume N` | Volume, 0 to 100 |
 | `--mute` | Start silent |
 | `--loop MODE` | `none`, `track` or `disc` |
