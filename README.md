@@ -143,6 +143,12 @@ vxp <disc.cue|disc.zip> [options]
 | `--choice-timeout MODE` | `firstBranch`, `discOrder` or `wait` |
 | `--no-config` | Ignore the settings file and use defaults; nothing is saved |
 
+Run `vxp` with no disc — or double-click `vxp.exe` — and the player opens empty. Open a
+disc from there, or swap to another while one is playing, with **Ctrl + O** (File > Open
+Disc), the menu's **Recent discs**, or by dropping a `.cue`, `.zip` or `.bin` on the
+window. **Ctrl + W** ejects back to the empty player. A file that will not open says why in
+the window and leaves whatever was playing alone.
+
 Options may come before or after the disc path. They override the saved settings for that
 run without changing what is stored: a launcher that always passes `--fullscreen` leaves a
 later windowed run windowed. An overridden setting the viewer then changes in the menus is
@@ -171,6 +177,8 @@ Every one of these can be rebound, to the keyboard or to a game controller.
 | F11 | Full screen |
 | F12 | Screenshot |
 | Backspace | Stop and rewind |
+| Ctrl + O | Open a disc |
+| Ctrl + W | Close the disc |
 | Ctrl + Q | Quit |
 
 | Controller | Action |

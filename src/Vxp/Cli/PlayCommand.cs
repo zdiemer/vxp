@@ -1,6 +1,6 @@
 using Vxp.Config;
-using Vxp.Discs;
 using Vxp.Emulation;
+using Vxp.Ui.Native;
 
 namespace Vxp.Cli;
 
@@ -8,31 +8,53 @@ namespace Vxp.Cli;
 public static class PlayCommand
 {
     /// <summary>Runs the player until the viewer quits.</summary>
+    /// <remarks>
+    /// With no disc named the window opens empty, ready for one to be opened or dropped on
+    /// it; that is what double-clicking vxp.exe does. A disc that is named but cannot be
+    /// opened is still an error here, so a launcher sees it in the exit code.
+    /// </remarks>
     public static int Run(CommandLine args)
     {
-        var cuePath = args.RequireCue();
+        var cuePath = args.At(0) is null ? null : args.RequireCue();
 
         var detached = args.Has("no-config");
         var settings = detached ? new VxpSettings() : SettingsStore.Load();
         var session = detached ? SettingsSession.Detached() : SettingsSession.Stored();
         ApplyOverrides(args, settings, session);
 
-        using var disc = DiscImage.Open(cuePath);
-        using var player = new VideoNowPlayer(disc);
+        var loaded = cuePath is null ? null : LoadedDisc.Open(cuePath);
 
-        if (args.Int("track") is { } track) player.SelectTrack(track);
-        if (args.Int("frame") is { } frame) player.SeekToFrame(frame);
+        try
+        {
+            if (loaded is not null)
+            {
+                var player = loaded.Player;
+                if (args.Int("track") is { } track) player.SelectTrack(track);
+                if (args.Int("frame") is { } frame) player.SeekToFrame(frame);
 
-        // Only a zip needs this: its tracks are decompressed ahead of the branches that
-        // will want them, so a jump does not stall on the archive.
-        disc.PrecacheInBackground();
+                // Only a zip needs this: its tracks are decompressed ahead of the branches that
+                // will want them, so a jump does not stall on the archive.
+                player.Disc.PrecacheInBackground();
 
-        settings.RecordRecentDisc(cuePath);
-        TrySave(session, settings);
+                settings.RecordRecentDisc(cuePath!);
+                TrySave(session, settings);
+            }
 
-        using var window = new PlayerWindow(player, settings, settings.BuildInputMap(), session);
-        window.Run();
-        return 0;
+            using var window = new PlayerWindow(loaded, settings, settings.BuildInputMap(), session);
+
+            // The window owns the disc from here, and swaps or disposes it itself.
+            loaded = null;
+
+            // Only once the window is up, so a start-up failure is still there to read.
+            if (OperatingSystem.IsWindows()) Win32.ReleaseOwnConsole();
+
+            window.Run();
+            return 0;
+        }
+        finally
+        {
+            loaded?.Dispose();
+        }
     }
 
     /// <summary>

@@ -15,11 +15,11 @@ public sealed class MenuContext
     /// <summary>The control bindings being edited.</summary>
     public required InputMap Input { get; init; }
 
-    /// <summary>The running player.</summary>
-    public required VideoNowPlayer Player { get; init; }
+    /// <summary>The running player, or null when no disc is loaded.</summary>
+    public required VideoNowPlayer? Player { get; init; }
 
-    /// <summary>The disc survey, for the track browser and the info page.</summary>
-    public required DiscMap Disc { get; init; }
+    /// <summary>The disc survey, for the track browser and the info page; null when no disc is loaded.</summary>
+    public required DiscMap? Disc { get; init; }
 
     /// <summary>Closes the menu and returns to playback.</summary>
     public required Action CloseMenu { get; init; }
@@ -56,6 +56,9 @@ public sealed class MenuContext
 
     /// <summary>Opens the screenshot folder in the system file browser.</summary>
     public required Action OpenScreenshots { get; init; }
+
+    /// <summary>Loads the disc at a path in place of the one playing.</summary>
+    public required Action<string> OpenRecent { get; init; }
 }
 
 /// <summary>Builds every menu page.</summary>
@@ -67,30 +70,44 @@ public sealed class MenuContext
 public static class Menus
 {
     /// <summary>The page shown when the menu key is pressed.</summary>
-    public static MenuPage Root(MenuContext context) => new()
+    /// <remarks>With no disc loaded, the rows that need one are left out.</remarks>
+    public static MenuPage Root(MenuContext context)
     {
-        Title = "vxp",
-        Subtitle = context.Disc.Name,
-        Items =
+        var loaded = context.Disc is not null;
+        var items = new List<MenuItem>();
+
+        if (loaded)
+        {
+            items.AddRange(
+            [
+                new MenuAction
+                {
+                    Label = "Resume",
+                    Help = "Return to the disc.",
+                    OnActivate = context.CloseMenu,
+                },
+                new MenuSubmenu
+                {
+                    Label = "Tracks",
+                    Help = "Browse the disc and jump to any segment.",
+                    Open = () => TrackBrowser(context),
+                },
+                new MenuSubmenu
+                {
+                    Label = "Disc information",
+                    Help = "What this disc is and how it is put together.",
+                    Open = () => DiscInfo(context),
+                },
+                new MenuHeading { Label = "" },
+            ]);
+        }
+
+        items.Add(Command(context, loaded ? "Open another disc..." : "Open a disc...", InputAction.OpenDisc, OpenHelp));
+        items.Add(RecentItem(context));
+        if (loaded) items.Add(Command(context, "Close disc", InputAction.CloseDisc, CloseHelp));
+
+        items.AddRange(
         [
-            new MenuAction
-            {
-                Label = "Resume",
-                Help = "Return to the disc.",
-                OnActivate = context.CloseMenu,
-            },
-            new MenuSubmenu
-            {
-                Label = "Tracks",
-                Help = "Browse the disc and jump to any segment.",
-                Open = () => TrackBrowser(context),
-            },
-            new MenuSubmenu
-            {
-                Label = "Disc information",
-                Help = "What this disc is and how it is put together.",
-                Open = () => DiscInfo(context),
-            },
             new MenuHeading { Label = "" },
             new MenuSubmenu
             {
@@ -123,19 +140,80 @@ public static class Menus
                 Open = () => Controls(context),
             },
             new MenuHeading { Label = "" },
-            new MenuAction
+        ]);
+
+        if (loaded)
+        {
+            items.Add(new MenuAction
             {
                 Label = "Take a screenshot",
                 Help = "Write the frame on screen to a PNG file.",
                 OnActivate = context.Screenshot,
-            },
-            new MenuAction
+            });
+        }
+
+        items.Add(new MenuAction
+        {
+            Label = "Quit",
+            Help = "Close the emulator.",
+            OnActivate = context.Quit,
+        });
+
+        return new MenuPage
+        {
+            Title = "vxp",
+            Subtitle = context.Disc?.Name ?? "No disc loaded",
+            Items = items,
+        };
+    }
+
+    private const string OpenHelp = "Choose a .cue, .zip or .bin to play.";
+    private const string CloseHelp = "Eject the disc and return to the empty player.";
+
+    /// <summary>The discs opened most recently, newest first, each a row that opens it again.</summary>
+    public static MenuPage RecentDiscs(MenuContext context)
+    {
+        var recent = context.Settings.RecentDiscs;
+        if (recent.Count == 0)
+        {
+            return new MenuPage
             {
-                Label = "Quit",
-                Help = "Close the emulator.",
-                OnActivate = context.Quit,
+                Title = "Recent discs",
+                Items = [new MenuHeading { Label = "No discs opened yet" }],
+            };
+        }
+
+        var items = new List<MenuItem>();
+        foreach (var path in recent.ToArray())
+        {
+            items.Add(new MenuAction
+            {
+                Label = Path.GetFileNameWithoutExtension(path),
+                Help = path,
+                OnActivate = () => context.OpenRecent(path),
+            });
+        }
+
+        items.Add(new MenuHeading { Label = "" });
+        items.Add(new MenuAction
+        {
+            Label = "Clear list",
+            Help = "Forget the discs opened so far.",
+            OnActivate = () =>
+            {
+                context.Settings.RecentDiscs.Clear();
+                context.Toast("Recent discs cleared");
             },
-        ],
+        });
+
+        return new MenuPage { Title = "Recent discs", Items = items };
+    }
+
+    private static MenuItem RecentItem(MenuContext context, string label = "Recent discs") => new MenuSubmenu
+    {
+        Label = label,
+        Help = "Open one of the discs played before.",
+        Open = () => RecentDiscs(context),
     };
 
     // ---------------------------------------------------------------- menu bar
@@ -163,6 +241,10 @@ public static class Menus
         Title = "File",
         Items =
         [
+            Command(context, "Open Disc...", InputAction.OpenDisc, OpenHelp),
+            RecentItem(context, "Recent Discs"),
+            Command(context, "Close Disc", InputAction.CloseDisc, CloseHelp),
+            new MenuHeading { Label = "" },
             Command(context, "Take Screenshot", InputAction.Screenshot, "Write the frame on screen to a PNG file."),
             new MenuAction
             {
@@ -315,7 +397,8 @@ public static class Menus
                 Label = "Disc Information...",
                 Help = "What this disc is and how it is put together.",
                 OnActivate = () => context.ShowInfo(
-                    "Disc information", string.Join(Environment.NewLine, DiscFacts(context.Disc))),
+                    "Disc information",
+                    context.Disc is null ? "No disc is loaded." : string.Join(Environment.NewLine, DiscFacts(context.Disc))),
             },
             new MenuAction
             {
@@ -338,6 +421,8 @@ public static class Menus
     /// </summary>
     public static MenuPage TrackMenu(MenuContext context, int groupSize = 20)
     {
+        if (context.Disc is null) return NoDiscPage("Tracks");
+
         var tracks = context.Disc.Tracks
             .Where(t => t.HasVideo || !context.Settings.Emulation.SkipEmptyTracks)
             .ToArray();
@@ -677,6 +762,8 @@ public static class Menus
     /// <summary>Every track on the disc, with its timing and branch structure.</summary>
     public static MenuPage TrackBrowser(MenuContext context)
     {
+        if (context.Disc is null) return NoDiscPage("Tracks");
+
         var items = new List<MenuItem>();
 
         foreach (var track in context.Disc.Tracks)
@@ -696,7 +783,7 @@ public static class Menus
         // Open the list on whatever is playing rather than at the top.
         for (var i = 0; i < items.Count; i++)
         {
-            if (!items[i].Label.TrimStart().StartsWith($"{context.Player.CurrentTrack} ")) continue;
+            if (!items[i].Label.TrimStart().StartsWith($"{context.Player?.CurrentTrack} ")) continue;
             page.Selected = i;
             break;
         }
@@ -714,7 +801,7 @@ public static class Menus
         {
             Label = $"{number,3}  {track.Duration:mm\\:ss}  {track.Title ?? ""}",
             Help = Describe(track),
-            Detail = () => context.Player.CurrentTrack == number ? "playing" : string.Empty,
+            Detail = () => context.Player?.CurrentTrack == number ? "playing" : string.Empty,
             OnActivate = () => context.SelectTrack(number),
         };
     }
@@ -728,10 +815,19 @@ public static class Menus
     }
 
     /// <summary>Read-only facts about the disc.</summary>
-    public static MenuPage DiscInfo(MenuContext context) => new()
+    public static MenuPage DiscInfo(MenuContext context) => context.Disc is null
+        ? NoDiscPage("Disc information")
+        : new()
+        {
+            Title = "Disc information",
+            Items = DiscFacts(context.Disc).Select(line => new MenuHeading { Label = line }).ToArray(),
+        };
+
+    /// <summary>What a page that needs a disc shows in the empty player.</summary>
+    private static MenuPage NoDiscPage(string title) => new()
     {
-        Title = "Disc information",
-        Items = DiscFacts(context.Disc).Select(line => new MenuHeading { Label = line }).ToArray(),
+        Title = title,
+        Items = [new MenuHeading { Label = "No disc loaded" }],
     };
 
     /// <summary>

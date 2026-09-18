@@ -148,6 +148,117 @@ internal static class Win32
     [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "MessageBoxW")]
     internal static extern int MessageBox(nint window, string text, string caption, uint type);
 
+    // OPENFILENAME flags.
+    internal const uint OfnHideReadOnly = 0x0000_0004;
+    internal const uint OfnNoChangeDir = 0x0000_0008;
+    internal const uint OfnPathMustExist = 0x0000_0800;
+    internal const uint OfnFileMustExist = 0x0000_1000;
+    internal const uint OfnExplorer = 0x0008_0000;
+
+    /// <summary>OPENFILENAMEW. Strings are raw pointers so the buffers stay under our control.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct OpenFileName
+    {
+        public int StructSize;
+        public nint Owner;
+        public nint Instance;
+        public nint Filter;
+        public nint CustomFilter;
+        public int MaxCustomFilter;
+        public int FilterIndex;
+        public nint File;
+        public int MaxFile;
+        public nint FileTitle;
+        public int MaxFileTitle;
+        public nint InitialDirectory;
+        public nint Title;
+        public uint Flags;
+        public ushort FileOffset;
+        public ushort FileExtension;
+        public nint DefaultExtension;
+        public nint CustomData;
+        public nint Hook;
+        public nint TemplateName;
+        public nint Reserved;
+        public int Reserved2;
+        public uint FlagsEx;
+    }
+
+    [DllImport("comdlg32.dll", EntryPoint = "GetOpenFileNameW", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetOpenFileName(ref OpenFileName info);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern uint GetConsoleProcessList([Out] uint[] processes, uint count);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool FreeConsole();
+
+    /// <summary>
+    /// Shows the system Open dialog and returns the file chosen, or null if it was
+    /// cancelled.
+    /// </summary>
+    /// <param name="owner">Window the dialog is modal to.</param>
+    /// <param name="title">Dialog caption.</param>
+    /// <param name="filter">Description and pattern pairs, NUL separated, double-NUL ended.</param>
+    /// <param name="initialDirectory">Folder to start in, or null for the system's choice.</param>
+    internal static string? ShowOpenFileDialog(nint owner, string title, string filter, string? initialDirectory)
+    {
+        const int MaxPath = 32 * 1024;
+
+        var file = Marshal.AllocHGlobal(MaxPath * sizeof(char));
+        var filterText = Marshal.StringToHGlobalUni(filter);
+        var titleText = Marshal.StringToHGlobalUni(title);
+        var directory = initialDirectory is null ? 0 : Marshal.StringToHGlobalUni(initialDirectory);
+
+        try
+        {
+            Marshal.WriteInt16(file, 0);
+
+            var info = new OpenFileName
+            {
+                StructSize = Marshal.SizeOf<OpenFileName>(),
+                Owner = owner,
+                Filter = filterText,
+                FilterIndex = 1,
+                File = file,
+                MaxFile = MaxPath,
+                InitialDirectory = directory,
+                Title = titleText,
+                Flags = OfnExplorer | OfnFileMustExist | OfnPathMustExist | OfnHideReadOnly | OfnNoChangeDir,
+            };
+
+            return GetOpenFileName(ref info) ? Marshal.PtrToStringUni(file) : null;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(file);
+            Marshal.FreeHGlobal(filterText);
+            Marshal.FreeHGlobal(titleText);
+            if (directory != 0) Marshal.FreeHGlobal(directory);
+        }
+    }
+
+    /// <summary>
+    /// Closes the console window if it was opened just for this process, as it is when
+    /// vxp.exe is started from Explorer rather than from a prompt.
+    /// </summary>
+    /// <remarks>
+    /// vxp is a console program so that its command line prints where it was typed. Double
+    /// clicked, that leaves an empty console sitting behind the player. A console shared
+    /// with a shell lists the shell too, so one listing only this process is its own.
+    /// </remarks>
+    internal static void ReleaseOwnConsole()
+    {
+        var processes = new uint[2];
+        if (GetConsoleProcessList(processes, (uint)processes.Length) != 1 || !FreeConsole()) return;
+
+        // The handles behind Console now lead nowhere, and writing to them would throw.
+        Console.SetOut(TextWriter.Null);
+        Console.SetError(TextWriter.Null);
+    }
+
     /// <summary>Index of a window's procedure in its extra data.</summary>
     private const int GwlpWndProc = -4;
 

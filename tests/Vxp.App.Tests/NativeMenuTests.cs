@@ -118,8 +118,8 @@ public class MenuBarTests
         {
             Settings = settings,
             Input = InputMap.CreateDefault(),
-            Player = null!,
-            Disc = null!,
+            Player = null,
+            Disc = null,
             CloseMenu = () => { },
             Screenshot = () => { },
             ToggleFullscreen = () => { },
@@ -130,6 +130,7 @@ public class MenuBarTests
             OpenPage = _ => { },
             ShowInfo = (_, _) => { },
             OpenScreenshots = () => { },
+            OpenRecent = _ => { },
         };
     }
 
@@ -187,8 +188,8 @@ public class MenuBarTests
         {
             Settings = new VxpSettings(),
             Input = InputMap.CreateDefault(),
-            Player = null!,
-            Disc = null!,
+            Player = null,
+            Disc = null,
             CloseMenu = () => { },
             Screenshot = () => { },
             ToggleFullscreen = () => { },
@@ -199,6 +200,7 @@ public class MenuBarTests
             OpenPage = _ => { },
             ShowInfo = (_, _) => { },
             OpenScreenshots = () => { },
+            OpenRecent = _ => { },
         };
 
         Menus.Transport(recording).Items.First(i => i.Label == "Stop").Activate();

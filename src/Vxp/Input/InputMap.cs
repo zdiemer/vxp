@@ -67,6 +67,8 @@ public sealed class InputMap
         Bind(InputAction.MenuPageDown, Binding.Key(Key("PageDown")));
         Bind(InputAction.MenuResetItem, Binding.Key(Key("Delete")), Binding.Button(ControllerButton.Y));
 
+        Bind(InputAction.OpenDisc, Binding.Key(Key("O"), KeyModifiers.Control));
+        Bind(InputAction.CloseDisc, Binding.Key(Key("W"), KeyModifiers.Control));
         Bind(InputAction.Quit, Binding.Key(Key("Q"), KeyModifiers.Control), Binding.Button(ControllerButton.Guide));
 
         return map;

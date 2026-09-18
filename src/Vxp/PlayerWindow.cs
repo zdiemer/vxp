@@ -29,11 +29,15 @@ public sealed unsafe class PlayerWindow : IDisposable
     /// <summary>Timer that keeps playback alive while a native menu holds the thread.</summary>
     private const nuint MenuLoopTimerId = 1;
 
-    private readonly VideoNowPlayer _player;
+    // The disc can be swapped while the window is up, and there may be none at all, so
+    // these three change together in Mount and are null in the empty player.
+    private LoadedDisc? _disc;
+    private VideoNowPlayer? _player;
+    private DiscMap? _discMap;
+
     private readonly VxpSettings _settings;
     private readonly InputMap _input;
     private readonly SettingsSession _session;
-    private readonly DiscMap _discMap;
 
     private readonly Sdl _sdl;
     private readonly Silk.NET.SDL.Window* _window;
@@ -77,22 +81,35 @@ public sealed unsafe class PlayerWindow : IDisposable
     private bool _running = true;
     private bool _disposed;
 
+    /// <summary>Why the last disc failed to open, shown on the empty player's screen.</summary>
+    private string? _loadError;
+
+    /// <summary>
+    /// Work that must not run inside the event pump: a modal dialog, or a disc swap
+    /// requested from a menu that is still being dispatched.
+    /// </summary>
+    private readonly Queue<Action> _deferred = new();
+
     private readonly record struct PendingFrame(long StartSample, byte[] Rgba);
 
     /// <summary>Creates the window and opens the audio device.</summary>
-    /// <param name="player">The disc to play.</param>
+    /// <param name="disc">
+    /// The disc to play, or null to open the empty player. The window owns it from here
+    /// and disposes it when another disc replaces it or the window closes.
+    /// </param>
     /// <param name="settings">Live settings; the menus change them in place.</param>
     /// <param name="input">The binding table.</param>
     /// <param name="session">What saving writes back, and whether it writes at all.</param>
-    public PlayerWindow(VideoNowPlayer player, VxpSettings settings, InputMap input, SettingsSession session)
+    public PlayerWindow(LoadedDisc? disc, VxpSettings settings, InputMap input, SettingsSession session)
     {
-        _player = player;
+        _disc = disc;
+        _player = disc?.Player;
+        _discMap = disc?.Map;
         _settings = settings;
         _input = input;
         _session = session;
-        _discMap = DiscMap.Build(player.Disc);
         _adjust = PictureAdjustment.FromSettings(settings.Video);
-        _displayFrame = (byte[])player.Framebuffer.Clone();
+        _displayFrame = CurrentFramebuffer();
 
         _sdl = Sdl.GetApi();
         if (_sdl.Init(Sdl.InitVideo | Sdl.InitAudio | Sdl.InitGamecontroller) != 0)
@@ -138,15 +155,168 @@ public sealed unsafe class PlayerWindow : IDisposable
         _sdl.PauseAudioDevice(_audioDevice, 0);
         OpenController();
 
-        _player.FrameDecoded += OnFrameDecoded;
+        if (_player is not null) _player.FrameDecoded += OnFrameDecoded;
         _menu.Changed += ApplySettings;
 
         ApplySettings();
         CreateNativeMenu(FrameLayout.Height * scale);
         _menuBarStale = false;
+        UpdateTitle();
 
         if (settings.Video.Fullscreen) SetFullscreen(true);
-        if (settings.Emulation.AutoPlay) _player.Play();
+        if (settings.Emulation.AutoPlay) _player?.Play();
+    }
+
+    // ------------------------------------------------------------ disc swapping
+
+    /// <summary>The frame to show right now: the player's, or black with no disc.</summary>
+    private byte[] CurrentFramebuffer()
+        => _player is null ? new byte[VideoDecoder.RgbaFrameBytes] : (byte[])_player.Framebuffer.Clone();
+
+    /// <summary>
+    /// Opens the disc at <paramref name="path"/> in place of the one playing. If it cannot
+    /// be opened the message is shown in the window and whatever was playing carries on.
+    /// </summary>
+    private void LoadDisc(string path)
+    {
+        LoadedDisc next;
+        try
+        {
+            next = LoadedDisc.Open(path);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // A bad file is the viewer's to fix, not a reason to take the player down.
+            _loadError = $"Could not open {Path.GetFileName(path)}: {ex.Message}";
+
+            // The empty player's screen shows it already, unless a menu is covering it;
+            // over a disc it has to be said.
+            if (_player is not null || _menu.IsOpen) _menu.Toast(_loadError, 6);
+
+            // A recent disc that has since gone is dropped, so the list stays worth reading.
+            if (!File.Exists(path) && _settings.RecentDiscs.Remove(path))
+            {
+                _menuBarStale = true;
+                SaveSettings();
+            }
+
+            return;
+        }
+
+        Mount(next);
+
+        // Only a zip needs this: see PlayCommand.
+        next.Player.Disc.PrecacheInBackground();
+
+        _settings.RecordRecentDisc(next.Path);
+        SaveSettings();
+        _menu.Toast(_discMap?.Name ?? "Disc loaded", 3);
+    }
+
+    /// <summary>
+    /// Puts <paramref name="next"/> in the player, or empties it when null, and disposes
+    /// whatever was there before.
+    /// </summary>
+    /// <remarks>
+    /// Frames and sound from the old disc are dropped rather than played out, and the
+    /// player is only ever driven from this thread, so nothing can reach the old one once
+    /// it has been unhooked here.
+    /// </remarks>
+    private void Mount(LoadedDisc? next)
+    {
+        var previous = _disc;
+        if (_player is not null) _player.FrameDecoded -= OnFrameDecoded;
+
+        _disc = next;
+        _player = next?.Player;
+        _discMap = next?.Map;
+        _fastForward = false;
+        _loadError = null;
+        _menu.Close();
+
+        if (_player is not null) _player.FrameDecoded += OnFrameDecoded;
+
+        ApplySettings();
+        ResetAudio();
+        previous?.Dispose();
+        UpdateTitle();
+
+        if (_player is not null && _settings.Emulation.AutoPlay) _player.Play();
+        _overlay.Flash(_settings.Interface);
+    }
+
+    private void CloseDisc()
+    {
+        if (_disc is null) return;
+
+        Mount(null);
+        _menu.Toast("Disc ejected");
+    }
+
+    /// <summary>Asks for a disc with the system Open dialog, or the nearest thing to one.</summary>
+    private void ChooseDisc()
+    {
+        var owner = OperatingSystem.IsWindows() ? WindowHandle() : 0;
+
+        if (owner == 0)
+        {
+            // Nowhere to put a native dialog: the recent list and a drop are what's left.
+            OpenMenu(Menus.RecentDiscs(BuildContext()));
+            _menu.Toast("Drop a .cue or .zip onto the window to open it", 4);
+            return;
+        }
+
+        var recent = _settings.RecentDiscs.FirstOrDefault();
+        var folder = recent is null ? null : Path.GetDirectoryName(recent);
+        if (folder is not null && !Directory.Exists(folder)) folder = null;
+
+        // Full screen hides the pointer, which the dialog needs.
+        _sdl.ShowCursor(1);
+        var path = Win32.ShowOpenFileDialog(owner, "Open a VideoNow disc", DiscFiles.DialogFilter, folder);
+        _sdl.ShowCursor(_settings.Video.Fullscreen ? 0 : 1);
+
+        if (path is not null) LoadDisc(path);
+    }
+
+    /// <summary>A file dropped on the window: opened if it looks like a disc.</summary>
+    private void OnDropFile(byte* file)
+    {
+        if (file is null) return;
+
+        var path = System.Runtime.InteropServices.Marshal.PtrToStringUTF8((nint)file);
+        _sdl.Free(file);
+        if (string.IsNullOrEmpty(path)) return;
+
+        if (!DiscFiles.IsDiscFile(path))
+        {
+            _menu.Toast($"Not a disc: {Path.GetFileName(path)}. Drop a .cue, .zip or .bin.", 4);
+            return;
+        }
+
+        _deferred.Enqueue(() => LoadDisc(path));
+    }
+
+    /// <summary>The Win32 handle behind the SDL window, whether or not it has a menu bar.</summary>
+    private nint WindowHandle()
+    {
+        if (_nativeWindow != 0) return _nativeWindow;
+
+        var version = new Silk.NET.SDL.Version();
+        _sdl.GetVersion(ref version);
+
+        var info = new SysWMInfo { Version = version };
+        if (!_sdl.GetWindowWMInfo(_window, &info) || info.Subsystem != SysWMType.Windows) return 0;
+
+        return info.Info.Win.Hwnd;
+    }
+
+    private void UpdateTitle()
+        => _sdl.SetWindowTitle(_window, _discMap is null ? "vxp" : $"{_discMap.Name} - vxp");
+
+    private void RunDeferred()
+    {
+        // Anything queued while this runs waits for the next turn of the loop.
+        for (var count = _deferred.Count; count > 0 && _deferred.TryDequeue(out var work); count--) work();
     }
 
     /// <summary>
@@ -374,6 +544,7 @@ public sealed unsafe class PlayerWindow : IDisposable
             if (_menuBarStale) RebuildNativeMenu();
 
             PumpEvents();
+            RunDeferred();
             TopUpAudio();
             PresentNewestReadyFrame();
             Render();
@@ -388,11 +559,14 @@ public sealed unsafe class PlayerWindow : IDisposable
     /// <summary>Pushes the current settings into the player and the renderer.</summary>
     private void ApplySettings()
     {
-        _player.Navigation = _settings.Emulation.Navigation;
-        _player.Timeout = _settings.Emulation.ChoiceTimeout;
-        _player.Loop = _settings.Emulation.Loop;
+        if (_player is not null)
+        {
+            _player.Navigation = _settings.Emulation.Navigation;
+            _player.Timeout = _settings.Emulation.ChoiceTimeout;
+            _player.Loop = _settings.Emulation.Loop;
 
-        if (!_fastForward) _player.Speed = _settings.Emulation.SpeedPercent / 100.0;
+            if (!_fastForward) _player.Speed = _settings.Emulation.SpeedPercent / 100.0;
+        }
 
         _adjust.Brightness = _settings.Video.Brightness;
         _adjust.Contrast = _settings.Video.Contrast;
@@ -448,6 +622,7 @@ public sealed unsafe class PlayerWindow : IDisposable
 
     private void TopUpAudio()
     {
+        if (_player is null) return;
         if (!_focused && !_settings.Audio.PlayInBackground) return;
 
         var target = (long)(_settings.Audio.BufferMilliseconds / 1000.0 * FrameLayout.AudioSampleRate) * sizeof(short);
@@ -528,6 +703,10 @@ public sealed unsafe class PlayerWindow : IDisposable
 
                 case EventType.Controllerdeviceadded:
                     OpenController();
+                    break;
+
+                case EventType.Dropfile:
+                    OnDropFile(e.Drop.File);
                     break;
 
                 case EventType.Windowevent:
@@ -631,8 +810,24 @@ public sealed unsafe class PlayerWindow : IDisposable
 
     private void Perform(InputAction action, bool repeat)
     {
+        if (_player is null && InputActions.NeedsDisc(action))
+        {
+            if (!repeat) _menu.Toast(NoDiscHint(), 3);
+            return;
+        }
+
         switch (action)
         {
+            case InputAction.OpenDisc:
+                // The dialog is modal and pumps messages itself, so it waits until the
+                // event that asked for it has been dealt with.
+                _deferred.Enqueue(ChooseDisc);
+                break;
+
+            case InputAction.CloseDisc:
+                _deferred.Enqueue(CloseDisc);
+                break;
+
             case InputAction.ToggleMenu:
                 OpenMenu(Menus.Root(BuildContext()));
                 break;
@@ -642,46 +837,46 @@ public sealed unsafe class PlayerWindow : IDisposable
                 break;
 
             case InputAction.TogglePause:
-                _player.TogglePause();
+                _player?.TogglePause();
                 break;
 
             case InputAction.Stop:
-                _player.Stop();
+                _player?.Stop();
                 ResetAudio();
                 break;
 
             case InputAction.NextTrack:
-                _player.NextTrack();
+                _player?.NextTrack();
                 ResetAudio();
                 break;
 
             case InputAction.PreviousTrack:
-                _player.PreviousTrack();
+                _player?.PreviousTrack();
                 ResetAudio();
                 break;
 
             case InputAction.GoBack:
-                if (_player.GoBack()) ResetAudio();
+                if (_player?.GoBack() == true) ResetAudio();
                 else _menu.Toast("Nothing to go back to");
                 break;
 
             case InputAction.SeekForward:
-                _player.SeekBy(_settings.Emulation.SeekSeconds);
+                _player?.SeekBy(_settings.Emulation.SeekSeconds);
                 ResetAudio();
                 break;
 
             case InputAction.SeekBackward:
-                _player.SeekBy(-_settings.Emulation.SeekSeconds);
+                _player?.SeekBy(-_settings.Emulation.SeekSeconds);
                 ResetAudio();
                 break;
 
             case InputAction.FrameForward:
-                _player.StepFrame(1);
+                _player?.StepFrame(1);
                 ResetAudio();
                 break;
 
             case InputAction.FrameBackward:
-                _player.StepFrame(-1);
+                _player?.StepFrame(-1);
                 ResetAudio();
                 break;
 
@@ -761,6 +956,7 @@ public sealed unsafe class PlayerWindow : IDisposable
 
     private void TakeChoice(int slot)
     {
+        if (_player is null) return;
         if (_settings.Emulation.InstantChoices)
         {
             if (_player.TakeChoiceNow(slot))
@@ -797,6 +993,7 @@ public sealed unsafe class PlayerWindow : IDisposable
 
     private void SetFastForward(bool on)
     {
+        if (_player is null) return;
         if (_fastForward == on) return;
 
         _fastForward = on;
@@ -823,6 +1020,7 @@ public sealed unsafe class PlayerWindow : IDisposable
         Perform = action => Perform(action, repeat: false),
         SelectTrack = number =>
         {
+            if (_player is null) return;
             _player.SelectTrack(number);
             _player.Play();
             ResetAudio();
@@ -832,7 +1030,15 @@ public sealed unsafe class PlayerWindow : IDisposable
         OpenPage = OpenMenu,
         ShowInfo = ShowInfo,
         OpenScreenshots = OpenScreenshotFolder,
+        OpenRecent = path => _deferred.Enqueue(() => LoadDisc(path)),
     };
+
+    /// <summary>What to tell someone who pressed a disc control with no disc in.</summary>
+    private string NoDiscHint()
+    {
+        var open = _input.BindingsFor(InputAction.OpenDisc);
+        return open.Count == 0 ? "No disc loaded" : $"No disc loaded - {open[0]} opens one";
+    }
 
     /// <summary>
     /// Shows a block of text in a native dialog, falling back to an in-window page where
@@ -882,7 +1088,7 @@ public sealed unsafe class PlayerWindow : IDisposable
     private void OpenMenu(MenuPage page)
     {
         _menu.Push(page);
-        if (!_settings.Audio.PlayInBackground) _player.Pause();
+        if (!_settings.Audio.PlayInBackground) _player?.Pause();
     }
 
     private void RequestQuit() => _running = false;
@@ -892,7 +1098,7 @@ public sealed unsafe class PlayerWindow : IDisposable
     {
         _sdl.ClearQueuedAudio(_audioDevice);
         lock (_pendingGate) _pending.Clear();
-        _displayFrame = (byte[])_player.Framebuffer.Clone();
+        _displayFrame = CurrentFramebuffer();
         _samplesQueued = 0;
     }
 
@@ -927,6 +1133,8 @@ public sealed unsafe class PlayerWindow : IDisposable
 
     private void TakeScreenshot()
     {
+        if (_player is null || _discMap is null) return;
+
         try
         {
             var directory = ScreenshotDirectory();
@@ -1070,6 +1278,12 @@ public sealed unsafe class PlayerWindow : IDisposable
             ? _settings.Interface.FontScale
             : Math.Clamp(windowWidth / 480, 1, 4);
 
+        if (_player is null)
+        {
+            DrawEmptyPlayer(windowWidth, windowHeight, scale);
+            return;
+        }
+
         _overlay.Track(_player, _settings.Interface);
 
         if (_canvas.Resize(windowWidth, windowHeight)) RecreateOverlayTexture();
@@ -1099,6 +1313,82 @@ public sealed unsafe class PlayerWindow : IDisposable
 
         var destination = new Rectangle<int>(0, 0, _canvas.Width, _canvas.Height);
         _sdl.RenderCopy(_renderer, _overlayTexture, (Rectangle<int>*)null, ref destination);
+    }
+
+    /// <summary>
+    /// The screen with no disc in: how to open one, and why the last one would not open.
+    /// </summary>
+    private void DrawEmptyPlayer(int windowWidth, int windowHeight, int menuScale)
+    {
+        if (_canvas.Resize(windowWidth, windowHeight)) RecreateOverlayTexture();
+        _canvas.Clear();
+
+        // The status overlay's size reads as small print; this is the whole screen.
+        var scale = _settings.Interface.FontScale > 0
+            ? _settings.Interface.FontScale + 1
+            : Math.Clamp(windowWidth / 260, 1, 4);
+
+        var lines = new List<(string Text, int Scale, Rgba Color)> { ("No disc", scale * 2, Rgba.Accent) };
+
+        var open = _input.BindingsFor(InputAction.OpenDisc);
+        var menu = _input.BindingsFor(InputAction.ToggleMenu);
+        lines.Add((open.Count > 0 ? $"{open[0]} to open a disc" : "Open a disc from the menu", scale, Rgba.White));
+        lines.Add(("or drop a .cue or .zip on this window", scale, Rgba.Grey));
+        if (menu.Count > 0) lines.Add(($"{menu[0]} for the menu", scale, Rgba.Grey));
+
+        var margin = 8 * scale;
+        var gap = BitmapFont.LineAdvance;
+        var errorFrom = lines.Count;
+
+        if (_loadError is not null)
+        {
+            foreach (var line in Wrap(_loadError, windowWidth - margin * 2, scale).Take(3))
+                lines.Add((line, scale, Rgba.Warn));
+        }
+
+        var height = lines.Sum(l => l.Scale * gap) + gap * scale;
+        var y = (windowHeight - height) / 2;
+
+        for (var i = 0; i < lines.Count; i++)
+        {
+            // A little air under the heading, and before an error.
+            if (i == 1 || (i == errorFrom && i < lines.Count)) y += gap * scale / 2;
+
+            var (text, size, color) = lines[i];
+            _canvas.TextCentred(windowWidth / 2, y, BitmapFont.Fit(text, windowWidth - margin * 2, size), size, color);
+            y += size * gap;
+        }
+
+        _menu.Draw(_canvas, menuScale, _settings.Interface.DimBehindMenu);
+
+        if (_overlayTexture is null) RecreateOverlayTexture();
+        if (_overlayTexture is null) return;
+
+        fixed (byte* pixels = _canvas.Pixels)
+            _sdl.UpdateTexture(_overlayTexture, (Rectangle<int>*)null, pixels, _canvas.Width * 4);
+
+        var destination = new Rectangle<int>(0, 0, _canvas.Width, _canvas.Height);
+        _sdl.RenderCopy(_renderer, _overlayTexture, (Rectangle<int>*)null, ref destination);
+    }
+
+    /// <summary>Breaks <paramref name="text"/> into lines that fit <paramref name="pixels"/>, at word boundaries.</summary>
+    private static IEnumerable<string> Wrap(string text, int pixels, int scale)
+    {
+        var line = string.Empty;
+
+        foreach (var word in text.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var candidate = line.Length == 0 ? word : $"{line} {word}";
+            if (line.Length > 0 && BitmapFont.Measure(candidate, scale) > pixels)
+            {
+                yield return line;
+                candidate = word;
+            }
+
+            line = candidate;
+        }
+
+        if (line.Length > 0) yield return line;
     }
 
     private void RecreateOverlayTexture()
@@ -1131,7 +1421,7 @@ public sealed unsafe class PlayerWindow : IDisposable
         if (_disposed) return;
         _disposed = true;
 
-        _player.FrameDecoded -= OnFrameDecoded;
+        if (_player is not null) _player.FrameDecoded -= OnFrameDecoded;
         _menu.Changed -= ApplySettings;
 
         // Drop the bar before the window goes: the message hook reads this field and must
@@ -1154,5 +1444,10 @@ public sealed unsafe class PlayerWindow : IDisposable
 
         _sdl.Quit();
         _sdl.Dispose();
+
+        _disc?.Dispose();
+        _disc = null;
+        _player = null;
+        _discMap = null;
     }
 }

@@ -1,11 +1,9 @@
 using Vxp;
 using Vxp.Cli;
 
-if (args.Length == 0)
-{
-    Usage.Print();
-    return 1;
-}
+// Double-clicked, or started with nothing to say: open the player with no disc in it.
+// "vxp --help" is where the usage lives.
+if (args.Length == 0) args = ["play"];
 
 var command = args[0].ToLowerInvariant();
 
@@ -72,8 +70,12 @@ internal static class Usage
             vxp - a VideoNow XP emulator
 
             PLAYING
+              vxp                              Open the player with no disc in it.
               vxp <disc.cue> [options]         Play a disc.
               vxp play <disc.cue> [options]    The same, spelled out.
+
+              Another disc can be opened at any time with Ctrl+O, File > Open Disc,
+              the menu's Recent discs, or by dropping a file on the window.
 
               Anywhere a <disc.cue> is taken, a .zip holding the cue sheet and its
               tracks works too. Options for this run are not saved.

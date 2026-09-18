@@ -334,8 +334,8 @@ public class MenuBuildTests
         {
             Settings = settings,
             Input = InputMap.CreateDefault(),
-            Player = null!,
-            Disc = null!,
+            Player = null,
+            Disc = null,
             CloseMenu = () => { },
             Screenshot = () => { },
             ToggleFullscreen = () => { },
@@ -346,6 +346,7 @@ public class MenuBuildTests
             OpenPage = _ => { },
             ShowInfo = (_, _) => { },
             OpenScreenshots = () => { },
+            OpenRecent = _ => { },
         };
     }
 

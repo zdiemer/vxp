@@ -259,13 +259,17 @@ public sealed class MenuController
         }
 
         var padding = 6 * scale;
-        var width = BitmapFont.Measure(_toast, scale) + padding * 2;
+
+        // A long message, such as why a disc would not open, is cut to the window rather than
+        // running off both sides of it.
+        var text = BitmapFont.Fit(_toast, canvas.Width - padding * 4, scale);
+        var width = BitmapFont.Measure(text, scale) + padding * 2;
         var height = BitmapFont.LineHeight(scale) + padding;
         var x = (canvas.Width - width) / 2;
         var y = canvas.Height - height - 12 * scale;
 
         canvas.Fill(x, y, width, height, Rgba.Panel);
         canvas.Outline(x, y, width, height, Rgba.Accent.WithAlpha(120));
-        canvas.Text(x + padding, y + padding / 2, _toast, scale, Rgba.White);
+        canvas.Text(x + padding, y + padding / 2, text, scale, Rgba.White);
     }
 }

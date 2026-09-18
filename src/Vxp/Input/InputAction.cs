@@ -87,6 +87,12 @@ public enum InputAction
     /// <summary>Write the current frame to a PNG file.</summary>
     Screenshot,
 
+    /// <summary>Choose a disc to open in place of the one playing.</summary>
+    OpenDisc,
+
+    /// <summary>Eject the disc and return to the empty player.</summary>
+    CloseDisc,
+
     /// <summary>Quit the emulator.</summary>
     Quit,
 
@@ -190,8 +196,22 @@ public static class InputActions
         [InputAction.MenuPageDown] = ("Menu page down", ActionCategory.Menu),
         [InputAction.MenuResetItem] = ("Reset setting", ActionCategory.Menu),
 
+        [InputAction.OpenDisc] = ("Open disc", ActionCategory.General),
+        [InputAction.CloseDisc] = ("Close disc", ActionCategory.General),
         [InputAction.Quit] = ("Quit", ActionCategory.General),
     };
+
+    /// <summary>
+    /// Whether the action only means anything with a disc in the player. With none loaded
+    /// these are turned away; settings, the menu and opening a disc still work.
+    /// </summary>
+    public static bool NeedsDisc(InputAction action) => action
+        is InputAction.TogglePause or InputAction.Stop
+        or InputAction.NextTrack or InputAction.PreviousTrack or InputAction.GoBack
+        or InputAction.SeekForward or InputAction.SeekBackward or InputAction.FastForward
+        or InputAction.FrameForward or InputAction.FrameBackward
+        or (>= InputAction.Choice1 and <= InputAction.Choice6)
+        or InputAction.TrackBrowser or InputAction.Screenshot or InputAction.CloseDisc;
 
     /// <summary>A human-readable name for the action.</summary>
     public static string Label(InputAction action)
