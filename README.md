@@ -101,27 +101,78 @@ channels each, 17.85 frames a second, and not a codec in sight.</em>
 
 </div>
 
-## Requirements
+## Installing
 
-- [.NET SDK 8.0 or later](https://dotnet.microsoft.com/download)
-- SDL2, which arrives through NuGet on Windows, macOS and Linux
+Every [release](../../releases/latest) carries self-contained builds that need no .NET
+runtime, each with SDL2 beside the binary:
 
-Tagged releases carry a Windows build, `vxp-windows-x86_64.zip`, that needs neither: it is a
-self-contained `vxp.exe` with `SDL2.dll` beside it. Pushing a `v*` tag that matches
-`<Version>` in `src/Vxp/Vxp.csproj` builds and publishes it.
+| Platform | Download |
+|----------|----------|
+| Windows x64 | `vxp-windows-x86_64.zip` |
+| Linux x64 / arm64 | `vxp-linux-x86_64.tar.gz` / `vxp-linux-arm64.tar.gz` |
+| macOS Apple silicon / Intel | `vxp-macos-arm64.tar.gz` / `vxp-macos-x86_64.tar.gz` |
 
-On Windows `vxp.exe` is a GUI program, so double-clicking it or starting it from a launcher
-opens the player and never a console window. The command line still works from a prompt;
-see [The command line on Windows](#the-command-line-on-windows) for how it differs.
+`SHA256SUMS` in the release lists the checksums.
+
+### Windows
+
+Unzip anywhere and run `vxp.exe`. It is a GUI program, so double-clicking it or starting it
+from a launcher opens the player and never a console window. The command line still works
+from a prompt; see [The command line on Windows](#the-command-line-on-windows) for how it
+differs.
+
+### Linux
+
+```sh
+tar -xzf vxp-linux-x86_64.tar.gz
+./vxp-linux-x86_64/vxp "Some Title.cue"
+```
+
+It needs glibc 2.27 or later (Ubuntu 18.04, Debian 10, Fedora 28 or newer) and, for the
+player window, an X11 or Wayland desktop. It also runs under WSL2 on Windows 11.
+
+The archive carries `libSDL2-2.0.so` beside `vxp`, but an installed SDL2 is preferred when
+there is one. The bundled copy speaks only X11 (XWayland on a Wayland desktop), while your
+distribution's SDL2 speaks Wayland natively:
+
+```sh
+sudo apt install libsdl2-2.0-0      # Debian, Ubuntu
+sudo dnf install SDL2               # Fedora
+sudo pacman -S sdl2                 # Arch
+```
+
+Keep `libSDL2-2.0.so` next to `vxp` either way, as the fallback. With no sound device the
+player still opens and plays at the right speed, silently. The headless commands (`info`,
+`verify`, `export`, `run` and the rest) need no display, no sound and no SDL. Settings live
+in `$XDG_CONFIG_HOME/vxp` (`~/.config/vxp`).
+
+### macOS
+
+```sh
+tar -xzf vxp-macos-arm64.tar.gz
+cd vxp-macos-arm64
+xattr -dr com.apple.quarantine .
+./vxp "Some Title.cue"
+```
+
+The build is signed only ad hoc, not notarised, so Gatekeeper refuses a downloaded copy
+until the quarantine flag is removed with the `xattr` line. It is a command-line program
+with `libSDL2-2.0.dylib` beside it, not an `.app`; keep the two together. The native menu
+bar is Windows-only, so use the in-window menu (Escape). The macOS builds are not tested
+on a Mac before each release; reports are welcome.
 
 ## Building
+
+Building from source needs the [.NET SDK 8.0 or later](https://dotnet.microsoft.com/download);
+SDL2 arrives through NuGet.
 
 ```sh
 dotnet build -c Release
 dotnet test
 ```
 
-The binary lands in `src/Vxp/bin/Release/net8.0/`.
+The binary lands in `src/Vxp/bin/Release/net8.0/`. Pushing a `v*` tag that matches `<Version>`
+in `src/Vxp/Vxp.csproj` builds every platform and publishes the release.
 
 ## Discs
 
