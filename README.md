@@ -102,6 +102,10 @@ Tagged releases carry a Windows build, `vxp-windows-x86_64.zip`, that needs neit
 self-contained `vxp.exe` with `SDL2.dll` beside it. Pushing a `v*` tag that matches
 `<Version>` in `src/Vxp/Vxp.csproj` builds and publishes it.
 
+On Windows `vxp.exe` is a GUI program, so double-clicking it or starting it from a launcher
+opens the player and never a console window. The command line still works from a prompt;
+see [The command line on Windows](#the-command-line-on-windows) for how it differs.
+
 ## Building
 
 ```sh
@@ -148,7 +152,9 @@ Run `vxp` with no disc — or double-click `vxp.exe` — and the player opens em
 disc from there, or swap to another while one is playing, with **Ctrl + O** (File > Open
 Disc), the menu's **Recent discs**, or by dropping a `.cue`, `.zip` or `.bin` on the
 window. **Ctrl + W** ejects back to the empty player. A file that will not open says why in
-the window and leaves whatever was playing alone.
+the window and leaves whatever was playing alone. A disc named on the command line that will
+not open exits with code 1, after printing why to the console it was started from, or on
+Windows showing it in a message box when there is no console, as from a launcher.
 
 Options may come before or after the disc path. They override the saved settings for that
 run without changing what is stored: a launcher that always passes `--fullscreen` leaves a
@@ -244,6 +250,39 @@ destinations it names:
 are read from the segment header, not guessed at.</em>
 
 </div>
+
+## The command line on Windows
+
+Everything below prints to standard output and sets an exit code, and on macOS and Linux
+it behaves like any other program. On Windows `vxp.exe` is built as a GUI program so that it
+never opens a console of its own, and it borrows the console of whatever started it
+instead. Pipes and redirection to a file work as usual. What changes is that **cmd and
+PowerShell do not wait for a GUI program when you type its name at the prompt**: the prompt
+comes back straight away, the output follows it, and the exit code is not seen. Press Enter
+for a fresh prompt.
+
+To wait, and get the output and the exit code:
+
+| Shell | Recipe |
+|-------|--------|
+| PowerShell | Pipe it anywhere: `vxp info disc.zip \| Out-Default`, `\| Out-File out.txt`, `\| Select-String Tracks`. `$LASTEXITCODE` is then set. |
+| PowerShell | `Start-Process vxp -ArgumentList 'info','disc.zip' -Wait -NoNewWindow -PassThru` and read `.ExitCode` |
+| cmd | Batch files already wait, and set `%ERRORLEVEL%`. At the prompt, `start /wait "" vxp info disc.zip`. |
+| Git Bash, MSYS2 | Waits normally. |
+
+In PowerShell, use `| Out-File` rather than `>`: PowerShell does not wait for a GUI program
+it is only redirecting, so `vxp info disc.zip > out.txt` leaves the file empty. The same line
+in cmd writes the file. `$v = vxp version` does not wait either; `$v = vxp version | Out-String`
+does.
+
+Standard input works when it is piped, so a script can come from anywhere:
+
+```powershell
+"track 6", "choice 2", "play track", "expect track 32" | vxp run disc.zip --script - | Out-Default
+```
+
+Typing a script into `vxp run --script -` at an interactive prompt is unreliable on Windows,
+because the shell is reading the same keyboard; use `--commands` or a file.
 
 ## Inspecting a disc
 

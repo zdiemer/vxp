@@ -1,5 +1,10 @@
 using Vxp;
 using Vxp.Cli;
+using Vxp.Ui.Native;
+
+// On Windows vxp is a GUI program, so it has no console until it borrows its parent's.
+// This comes first: Console picks up the standard handles on first use.
+if (OperatingSystem.IsWindows()) ParentConsole.Attach();
 
 // Double-clicked, or started with nothing to say: open the player with no disc in it.
 // "vxp --help" is where the usage lives.
@@ -51,6 +56,13 @@ try
 catch (Exception ex) when (ex is ArgumentException or FileNotFoundException or InvalidDataException or IOException or SdlException)
 {
     Console.Error.WriteLine($"vxp: {ex.Message}");
+
+    // Started from Explorer or a launcher, with a disc that will not open, there is no
+    // console to print to and the player never appears; without this it would simply
+    // not start.
+    if (OperatingSystem.IsWindows() && !ParentConsole.ErrorsAreVisible)
+        Win32.MessageBox(0, ex.Message, "vxp", Win32.MbOk | Win32.MbIconError);
+
     return 1;
 }
 

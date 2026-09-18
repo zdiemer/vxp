@@ -76,7 +76,8 @@ public static class SessionCommand
     private static List<string> ReadAllLines(TextReader reader)
     {
         var lines = new List<string>();
-        while (reader.ReadLine() is { } line) lines.Add(line);
+        // Windows PowerShell starts what it pipes to a program with a byte order mark.
+        while (reader.ReadLine() is { } line) lines.Add(lines.Count == 0 ? line.TrimStart('﻿') : line);
         return lines;
     }
 

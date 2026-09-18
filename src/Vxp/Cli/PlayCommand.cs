@@ -1,6 +1,5 @@
 using Vxp.Config;
 using Vxp.Emulation;
-using Vxp.Ui.Native;
 
 namespace Vxp.Cli;
 
@@ -44,9 +43,6 @@ public static class PlayCommand
 
             // The window owns the disc from here, and swaps or disposes it itself.
             loaded = null;
-
-            // Only once the window is up, so a start-up failure is still there to read.
-            if (OperatingSystem.IsWindows()) Win32.ReleaseOwnConsole();
 
             window.Run();
             return 0;

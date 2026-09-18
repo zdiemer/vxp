@@ -1,6 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <!-- A Windows GUI program, so a double click or a launcher opens only the player and
+         never a console. It borrows the console of whatever started it, when there is one,
+         so the command line still prints; see Ui/Native/ParentConsole.cs. Elsewhere there
+         is no such distinction and it stays a plain executable. -->
+    <OutputType Condition="$(RuntimeIdentifier.StartsWith('win')) or ('$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Windows')))">WinExe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>Vxp</RootNamespace>
     <AssemblyName>vxp</AssemblyName>

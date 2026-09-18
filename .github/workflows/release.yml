@@ -60,7 +60,14 @@ jobs:
           foreach ($file in "publish/vxp.exe", "publish/SDL2.dll") {
             if (-not (Test-Path $file)) { throw "missing $file" }
           }
-          $version = & publish/vxp.exe version
+          # vxp.exe must be a GUI-subsystem program (2), or a double click opens a console.
+          $bytes = [IO.File]::ReadAllBytes((Resolve-Path publish/vxp.exe))
+          $subsystem = [BitConverter]::ToUInt16($bytes, [BitConverter]::ToInt32($bytes, 0x3C) + 92)
+          if ($subsystem -ne 2) { throw "publish/vxp.exe has PE subsystem $subsystem, not 2 (GUI)" }
+
+          # PowerShell only waits for a GUI program whose output it pipes somewhere.
+          $version = (& publish/vxp.exe version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $version) { throw "vxp.exe version failed" }
           "built: $version"
 
           New-Item -ItemType Directory -Force staging | Out-Null

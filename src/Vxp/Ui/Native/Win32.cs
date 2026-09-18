@@ -61,6 +61,7 @@ internal static class Win32
 
     // MessageBox styles.
     internal const uint MbOk = 0x0000;
+    internal const uint MbIconError = 0x0010;
     internal const uint MbIconInformation = 0x0040;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -188,13 +189,6 @@ internal static class Win32
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetOpenFileName(ref OpenFileName info);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    internal static extern uint GetConsoleProcessList([Out] uint[] processes, uint count);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool FreeConsole();
-
     /// <summary>
     /// Shows the system Open dialog and returns the file chosen, or null if it was
     /// cancelled.
@@ -238,25 +232,6 @@ internal static class Win32
             Marshal.FreeHGlobal(titleText);
             if (directory != 0) Marshal.FreeHGlobal(directory);
         }
-    }
-
-    /// <summary>
-    /// Closes the console window if it was opened just for this process, as it is when
-    /// vxp.exe is started from Explorer rather than from a prompt.
-    /// </summary>
-    /// <remarks>
-    /// vxp is a console program so that its command line prints where it was typed. Double
-    /// clicked, that leaves an empty console sitting behind the player. A console shared
-    /// with a shell lists the shell too, so one listing only this process is its own.
-    /// </remarks>
-    internal static void ReleaseOwnConsole()
-    {
-        var processes = new uint[2];
-        if (GetConsoleProcessList(processes, (uint)processes.Length) != 1 || !FreeConsole()) return;
-
-        // The handles behind Console now lead nowhere, and writing to them would throw.
-        Console.SetOut(TextWriter.Null);
-        Console.SetError(TextWriter.Null);
     }
 
     /// <summary>Index of a window's procedure in its extra data.</summary>
