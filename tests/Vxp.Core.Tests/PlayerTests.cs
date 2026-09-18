@@ -44,7 +44,7 @@ public class PlayerTransportTests
     }
 
     /// <summary>
-    /// Batman vs The Joker leaves 24 seconds of black silence (tracks 3 and 4) between the
+    /// Batman vs The Joker leaves 217 frames of black silence (tracks 3 and 4) between the
     /// title sequence and the first choice, and playing into them looked like a hang.
     /// </summary>
     [Fact]
@@ -52,7 +52,7 @@ public class PlayerTransportTests
     {
         using var disc = SyntheticDiscFile.Create(
             new TrackSpec(1, 2),
-            new TrackSpec(2, 2, ContinueTrack: 5),
+            new TrackSpec(2, 2),
             new TrackSpec(3, 2, Blank: true),
             new TrackSpec(4, 3, Blank: true),
             new TrackSpec(5, 4, SegmentKind.Choice, Branches: [6]),
@@ -380,25 +380,31 @@ public class PlayerBranchTests
     }
 
     [Fact]
-    public void TerminalSegmentsStopPlayback()
+    public void ScoringSegmentsPlayOnRatherThanStopping()
     {
+        // Kind 4 was once read as "stop here", but every such segment on the retail discs
+        // is a right-answer clip that the quiz carries on from.
         using var disc = SyntheticDiscFile.Create(
-            new TrackSpec(1, 2, SegmentKind.Terminal),
+            new TrackSpec(1, 2, SegmentKind.ScoreUp),
             new TrackSpec(2, 2));
 
         using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
         player.Play();
         RunToNextTrack(player);
 
-        Assert.Equal(TransportState.Stopped, player.State);
-        Assert.Equal(1, player.CurrentTrack);
+        Assert.Equal(TransportState.Playing, player.State);
+        Assert.Equal(2, player.CurrentTrack);
+        Assert.Equal(VideoNowPlayer.InitialScore + 1, player.Score);
     }
 
-    [Fact]
-    public void HubSegmentsFollowTheContinuePointer()
+    [Theory]
+    [InlineData(SegmentKind.Linear)]
+    [InlineData(SegmentKind.ScoreDown)]
+    [InlineData(SegmentKind.ScoreReset)]
+    public void TheContinuePointerNamesTheNextTrack(SegmentKind kind)
     {
         using var disc = SyntheticDiscFile.Create(
-            new TrackSpec(1, 2, SegmentKind.Hub, ContinueTrack: 3),
+            new TrackSpec(1, 2, kind, ContinueTrack: 3),
             new TrackSpec(2, 2),
             new TrackSpec(3, 2));
 
@@ -410,22 +416,7 @@ public class PlayerBranchTests
     }
 
     [Fact]
-    public void LinearSegmentsIgnoreTheContinuePointerByDefault()
-    {
-        using var disc = SyntheticDiscFile.Create(
-            new TrackSpec(1, 2, SegmentKind.Linear, ContinueTrack: 3),
-            new TrackSpec(2, 2),
-            new TrackSpec(3, 2));
-
-        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
-        player.Play();
-        RunToNextTrack(player);
-
-        Assert.Equal(2, player.CurrentTrack);
-    }
-
-    [Fact]
-    public void FollowHeaderNavigationObeysTheContinuePointer()
+    public void DiscOrderNavigationIgnoresTheContinuePointer()
     {
         using var disc = SyntheticDiscFile.Create(
             new TrackSpec(1, 2, SegmentKind.Linear, ContinueTrack: 3),
@@ -434,13 +425,187 @@ public class PlayerBranchTests
 
         using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath))
         {
-            Navigation = NavigationPolicy.FollowHeader,
+            Navigation = NavigationPolicy.DiscOrder,
         };
 
         player.Play();
         RunToNextTrack(player);
 
+        Assert.Equal(2, player.CurrentTrack);
+    }
+
+    /// <summary>
+    /// Teen Titans cuts each missed prompt as a segment whose 0x4F names the next scene
+    /// (4 → 10 → 5 → 11 → 6 ...). Read in disc order, the last of those clips pointed
+    /// back to the first scene and the title looped for ever.
+    /// </summary>
+    [Fact]
+    public void MissedPromptsCarryOnToTheNextSceneInsteadOfLooping()
+    {
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 2, ContinueTrack: 4),
+            new TrackSpec(2, 2, ContinueTrack: 5),
+            new TrackSpec(3, 2, ContinueTrack: 6),
+            new TrackSpec(4, 2, SegmentKind.ScoreDown, ContinueTrack: 2),
+            new TrackSpec(5, 2, SegmentKind.ScoreDown, ContinueTrack: 3),
+            new TrackSpec(6, 2, SegmentKind.ScoreDown, ContinueTrack: 7),
+            new TrackSpec(7, 2, SegmentKind.Choice, Branches: [7]));
+
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+        player.Play();
+
+        var visited = new List<int> { player.CurrentTrack };
+        for (var i = 0; i < 6; i++)
+        {
+            RunToNextTrack(player);
+            visited.Add(player.CurrentTrack);
+        }
+
+        Assert.Equal([1, 4, 2, 5, 3, 6, 7], visited);
+        Assert.Equal(VideoNowPlayer.InitialScore - 3, player.Score);
+    }
+
+    [Fact]
+    public void ASegmentNamingItselfRepeatsUntilTheViewerActs()
+    {
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 3, ContinueTrack: 1, Branches: [0, 0, 2]),
+            new TrackSpec(2, 2));
+
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+        player.Play();
+
+        var buffer = new short[player.Layout.AudioBytes];
+        for (var i = 0; i < 10; i++) player.RenderAudio(buffer);
+        Assert.Equal(1, player.CurrentTrack);
+        Assert.True(player.IsChoicePoint);
+
+        Assert.True(player.PressChoice(2));
+        RunToNextTrack(player);
+        Assert.Equal(2, player.CurrentTrack);
+    }
+
+    [Fact]
+    public void ABranchPlaysTheTracksQueuedBehindIt()
+    {
+        // Quiz questions are written this way: an answer plays its "right" or "wrong"
+        // clip, then the entry's next byte names the following question.
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 2, SegmentKind.Choice, PlayLists: [[3, 5]]),
+            new TrackSpec(2, 2),
+            new TrackSpec(3, 2, SegmentKind.ScoreUp),
+            new TrackSpec(4, 2),
+            new TrackSpec(5, 2));
+
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+        player.Play();
+        Assert.True(player.PressChoice(0));
+
+        RunToNextTrack(player);
         Assert.Equal(3, player.CurrentTrack);
+        Assert.Equal([5], player.FollowOn);
+
+        RunToNextTrack(player);
+        Assert.Equal(5, player.CurrentTrack);
+    }
+
+    [Theory]
+    [InlineData(0, 4)]
+    [InlineData(1, 3)]
+    [InlineData(3, 2)]
+    public void TaggedSegmentsBranchOnTheScore(int rightAnswers, int expected)
+    {
+        // Tracks 5-7 are three questions' clips, right ones adding to the score; track 8
+        // sends the viewer to one of three endings by how many were right.
+        var tracks = new List<TrackSpec>
+        {
+            new(1, 2, ContinueTrack: 5),
+            new(2, 2),
+            new(3, 2),
+            new(4, 2),
+        };
+
+        for (var i = 0; i < 3; i++)
+            tracks.Add(new TrackSpec(5 + i, 2, i < rightAnswers ? SegmentKind.ScoreUp : SegmentKind.Linear));
+
+        tracks.Add(new TrackSpec(8, 2, SegmentKind.TaggedChoice, Branches: [2, 3, 4], Thresholds: [0x67, 0x65, 0x64]));
+
+        using var disc = SyntheticDiscFile.Create([.. tracks]);
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+        player.Play();
+
+        for (var i = 0; i < 5 && player.CurrentTrack != 8; i++) RunToNextTrack(player);
+        Assert.Equal(8, player.CurrentTrack);
+
+        RunToNextTrack(player);
+        Assert.Equal(expected, player.CurrentTrack);
+    }
+
+    [Fact]
+    public void AScoreResetPutsTheScoreBack()
+    {
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 2, SegmentKind.ScoreUp),
+            new TrackSpec(2, 2, SegmentKind.ScoreUp),
+            new TrackSpec(3, 2, SegmentKind.ScoreReset),
+            new TrackSpec(4, 2));
+
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+        player.Play();
+
+        // A segment's effect lands as its first frame plays.
+        RunToNextTrack(player);
+        Assert.Equal(2, player.CurrentTrack);
+        Assert.Equal(VideoNowPlayer.InitialScore + 2, player.Score);
+
+        RunToNextTrack(player);
+        Assert.Equal(3, player.CurrentTrack);
+        Assert.Equal(VideoNowPlayer.InitialScore, player.Score);
+    }
+
+    /// <summary>
+    /// Batman's quick-time scenes offer the next scene under one key for a dozen frames,
+    /// then send every key to the failure clip; 0x4F names the same clip for no press.
+    /// </summary>
+    [Theory]
+    [InlineData(-1, 3)]
+    [InlineData(2, 2)]
+    [InlineData(4, 3)]
+    public void TimedPromptsAnswerFromTheFrameOnScreen(int pressAtFrame, int expected)
+    {
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 6, ContinueTrack: 3, Prompts: [(2, 3, [2, 3]), (4, 5, [3, 3])]),
+            new TrackSpec(2, 2),
+            new TrackSpec(3, 2));
+
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+        player.Play();
+
+        var buffer = new short[player.Layout.AudioBytes];
+        for (var frame = 0; player.CurrentTrack == 1 && frame < 20; frame++)
+        {
+            player.RenderAudio(buffer);
+            if (frame == pressAtFrame)
+            {
+                Assert.True(player.IsChoicePoint);
+                Assert.True(player.PressChoice(0));
+            }
+        }
+
+        Assert.Equal(expected, player.CurrentTrack);
+    }
+
+    [Fact]
+    public void TheStandingMenuButtonIsNotAChoicePoint()
+    {
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 2, Branches: [0, 0, 0, 0, 0, 2]),
+            new TrackSpec(2, 2));
+
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+
+        Assert.False(player.IsChoicePoint);
+        Assert.True(player.PressChoice(5));
     }
 
     [Fact]
@@ -565,7 +730,7 @@ public class DiscMapTests
             new TrackSpec(2, 2, SegmentKind.Choice, Branches: [4, 5]),
             new TrackSpec(3, 2),
             new TrackSpec(4, 2),
-            new TrackSpec(5, 2, SegmentKind.Terminal));
+            new TrackSpec(5, 2, SegmentKind.ScoreUp));
 
         using var image = DiscImage.Open(disc.CuePath);
         var map = DiscMap.Build(image);
@@ -580,14 +745,48 @@ public class DiscMapTests
     {
         using var disc = SyntheticDiscFile.Create(
             new TrackSpec(1, 2, SegmentKind.Choice, Branches: [3]),
-            new TrackSpec(2, 2, SegmentKind.Terminal),
-            new TrackSpec(3, 2, SegmentKind.Terminal));
+            new TrackSpec(2, 2, SegmentKind.ScoreUp),
+            new TrackSpec(3, 2, SegmentKind.ScoreUp));
 
         using var image = DiscImage.Open(disc.CuePath);
         var map = DiscMap.Build(image);
 
         // Track 2 is only reachable in disc order, which a choice point does not use.
         Assert.Equal([1, 3], map.Reachable(1));
+    }
+
+    [Fact]
+    public void SuccessorsFollowTheContinuePointerAndQueuedTracks()
+    {
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 2, ContinueTrack: 3),
+            new TrackSpec(2, 2),
+            new TrackSpec(3, 2, SegmentKind.Choice, PlayLists: [[4, 6]]),
+            new TrackSpec(4, 2),
+            new TrackSpec(5, 2),
+            new TrackSpec(6, 2));
+
+        using var image = DiscImage.Open(disc.CuePath);
+        var map = DiscMap.Build(image);
+
+        Assert.Equal([3], map.Successors(1));
+        Assert.Equal([6], map.Successors(4));
+        Assert.Equal([1, 3, 4, 6], map.Reachable(1));
+        Assert.Equal([4, 6], map.Find(3)!.Branches.Single().PlayList);
+    }
+
+    [Fact]
+    public void ASurveyOfEveryFrameFindsTimedPrompts()
+    {
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 6, ContinueTrack: 3, Prompts: [(2, 3, [2, 3])]),
+            new TrackSpec(2, 2),
+            new TrackSpec(3, 2));
+
+        using var image = DiscImage.Open(disc.CuePath);
+
+        Assert.Empty(DiscMap.Build(image).Find(1)!.Branches);
+        Assert.Equal([2, 3], DiscMap.Build(image, everyFrame: true).Successors(1).Order());
     }
 
     [Fact]

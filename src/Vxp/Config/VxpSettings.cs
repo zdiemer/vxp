@@ -146,7 +146,7 @@ public sealed class EmulationSettings
     public bool AutoPlay { get; set; } = true;
 
     /// <summary>How the player chooses the track that follows a segment.</summary>
-    public NavigationPolicy Navigation { get; set; } = NavigationPolicy.DiscOrder;
+    public NavigationPolicy Navigation { get; set; } = NavigationPolicy.FollowHeader;
 
     /// <summary>What happens at a choice point when the viewer does nothing.</summary>
     public ChoiceTimeout ChoiceTimeout { get; set; } = ChoiceTimeout.FirstBranch;
@@ -224,7 +224,10 @@ public sealed class InterfaceSettings
 public sealed class VxpSettings
 {
     /// <summary>Schema version, so older files can be migrated.</summary>
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = CurrentVersion;
+
+    /// <summary>Schema version this build writes.</summary>
+    public const int CurrentVersion = 2;
 
     /// <summary>Picture settings.</summary>
     public VideoSettings Video { get; set; } = new();

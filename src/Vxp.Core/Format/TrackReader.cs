@@ -100,6 +100,24 @@ public sealed class TrackReader
             Layout);
     }
 
+    /// <summary>
+    /// Reads only the header of the frame at <paramref name="frameIndex"/>, which is a
+    /// small fraction of the frame and all that surveying a track's branch tables needs.
+    /// </summary>
+    public FrameHeader? ReadHeader(int frameIndex)
+    {
+        if (frameIndex < 0 || frameIndex >= FrameCount) return null;
+
+        var groups = (Layout.HeaderBytes + FrameLayout.VideoBytesPerGroup - 1) / FrameLayout.VideoBytesPerGroup;
+        var stream = _stream.AsSpan(0, groups * FrameLayout.GroupBytes);
+
+        var offset = StartOffset + (long)frameIndex * Layout.StreamBytes;
+        if (_track.Read(offset, stream) < stream.Length) return null;
+
+        Deinterleave(stream, _video, _audio);
+        return FrameHeader.Parse(_video, Layout);
+    }
+
     /// <summary>Splits an interleaved frame into its video and audio halves.</summary>
     public static void Deinterleave(ReadOnlySpan<byte> stream, Span<byte> video, Span<byte> audio)
     {

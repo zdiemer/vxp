@@ -22,15 +22,15 @@ public enum TransportState
 public enum NavigationPolicy
 {
     /// <summary>
-    /// Advance in disc order unless the viewer took a branch. Segment kinds that
-    /// unambiguously redirect (<see cref="SegmentKind.Hub"/>,
-    /// <see cref="SegmentKind.Restart"/>) are still honoured. This is the safe default.
+    /// Advance in disc order unless the viewer took a branch, ignoring where the disc
+    /// says to go. Useful for watching every segment of a title in turn.
     /// </summary>
     DiscOrder,
 
     /// <summary>
-    /// Also follow register 0x4F as an unconditional "continue with this track" pointer.
-    /// The meaning of that register is not fully established, so this is for experimentation.
+    /// Go where the disc says: the track named by register 0x4F, then any tracks queued
+    /// by the branch that was taken, then the score branch of a tagged segment, and only
+    /// then disc order. This is how the titles are meant to play, and the default.
     /// </summary>
     FollowHeader,
 }
@@ -91,7 +91,8 @@ public sealed class VideoNowPlayer : IDisposable
     private byte[] _frameAudio = [];
     private double _audioPosition;
     private double _speed = 1.0;
-    private int _pendingChoiceSlot = -1;
+    private readonly List<int> _followOn = new();
+    private BranchEntry? _pendingChoice;
     private bool _disposed;
 
     /// <summary>Opens a player over an already mounted disc.</summary>
@@ -124,7 +125,7 @@ public sealed class VideoNowPlayer : IDisposable
     public TransportState State { get; private set; } = TransportState.Stopped;
 
     /// <summary>How the player chooses the next track.</summary>
-    public NavigationPolicy Navigation { get; set; } = NavigationPolicy.DiscOrder;
+    public NavigationPolicy Navigation { get; set; } = NavigationPolicy.FollowHeader;
 
     /// <summary>What happens at a choice point when the viewer does nothing.</summary>
     public ChoiceTimeout Timeout { get; set; } = ChoiceTimeout.FirstBranch;
@@ -154,14 +155,37 @@ public sealed class VideoNowPlayer : IDisposable
     /// <summary>Header of the frame on screen, or <see langword="null"/> if nothing is loaded.</summary>
     public FrameHeader? CurrentHeader { get; private set; }
 
-    /// <summary>Branch destinations offered by the current segment.</summary>
+    /// <summary>
+    /// Branch table of the frame on screen. It can change within a segment: timed
+    /// prompts are runs of frames with a table of their own.
+    /// </summary>
     public IReadOnlyList<BranchEntry> Branches { get; private set; } = [];
 
-    /// <summary>True while the current segment offers the viewer a choice.</summary>
-    public bool IsChoicePoint => Branches.Count > 0;
+    /// <summary>
+    /// True while the frame on screen puts a choice to the viewer: a choice segment, or a
+    /// prompt within any other. A lone entry in the last slot is the standing "back to
+    /// the menu" button that most segments carry, and does not count.
+    /// </summary>
+    public bool IsChoicePoint =>
+        CurrentHeader is { OffersChoice: true }
+            ? Branches.Count > 0
+            : Branches.Any(b => b.Slot != FrameHeader.BranchEntryCount - 1);
 
     /// <summary>Branch slot the viewer has selected for this segment, or -1.</summary>
-    public int SelectedChoice => _pendingChoiceSlot;
+    public int SelectedChoice => _pendingChoice?.Slot ?? -1;
+
+    /// <summary>Score before any segment has changed it.</summary>
+    public const int InitialScore = 0x64;
+
+    /// <summary>
+    /// The score that <see cref="SegmentKind.ScoreUp"/>, <see cref="SegmentKind.ScoreDown"/>
+    /// and <see cref="SegmentKind.ScoreReset"/> segments change and
+    /// <see cref="SegmentKind.TaggedChoice"/> segments branch on.
+    /// </summary>
+    public int Score { get; private set; } = InitialScore;
+
+    /// <summary>Tracks queued to play once the current one ends, from the branch that led here.</summary>
+    public IReadOnlyList<int> FollowOn => _followOn;
 
     /// <summary>Tracks visited so far, most recent last. Drives <see cref="GoBack"/>.</summary>
     public IReadOnlyList<int> History => _history;
@@ -231,6 +255,7 @@ public sealed class VideoNowPlayer : IDisposable
         {
             State = TransportState.Stopped;
             _history.Clear();
+            Score = InitialScore;
             SelectTrackCore(FirstPlayableTrack());
         }
     }
@@ -333,8 +358,13 @@ public sealed class VideoNowPlayer : IDisposable
     /// segment ends, which is how these discs are cut: the choice window is the tail of
     /// the segment and each destination is a whole separate track.
     /// </summary>
+    /// <remarks>
+    /// The entry is looked up in the frame on screen when the button is pressed, because
+    /// tables change within a segment: a timed prompt answers one way inside its window
+    /// and another way once the window has passed.
+    /// </remarks>
     /// <param name="slot">Branch slot, 0 through 5.</param>
-    /// <returns>True if the current segment offers that slot.</returns>
+    /// <returns>True if the frame on screen offers that slot.</returns>
     public bool PressChoice(int slot)
     {
         lock (_gate)
@@ -342,7 +372,7 @@ public sealed class VideoNowPlayer : IDisposable
             foreach (var branch in Branches)
             {
                 if (branch.Slot != slot) continue;
-                _pendingChoiceSlot = slot;
+                _pendingChoice = branch;
                 return true;
             }
 
@@ -353,7 +383,7 @@ public sealed class VideoNowPlayer : IDisposable
     /// <summary>Clears any pending branch selection.</summary>
     public void ClearChoice()
     {
-        lock (_gate) _pendingChoiceSlot = -1;
+        lock (_gate) _pendingChoice = null;
     }
 
     /// <summary>
@@ -367,7 +397,7 @@ public sealed class VideoNowPlayer : IDisposable
             foreach (var branch in Branches)
             {
                 if (branch.Slot != slot) continue;
-                if (!LoadTrack(branch.Track, remember: true)) return false;
+                if (!TakeBranch(branch)) return false;
                 DecodeCurrentFrameForDisplay();
                 return true;
             }
@@ -459,22 +489,44 @@ public sealed class VideoNowPlayer : IDisposable
 
         CurrentFrame++;
         ApplyFrame(frame);
+        if (frame.FrameIndex == 0) ApplyScore(CurrentHeader!.Kind);
         _frameAudio = frame.Audio;
         return true;
     }
 
     private void ApplyFrame(VideoNowFrame frame)
     {
-        var hadChoice = Branches.Count > 0;
+        var hadChoice = IsChoicePoint;
 
         CurrentHeader = frame.ReadHeader();
-        Branches = CurrentHeader.OffersChoice ? CurrentHeader.Branches : [];
-        if (Branches.Count == 0) _pendingChoiceSlot = -1;
+        Branches = CurrentHeader.Branches;
 
         VideoDecoder.DecodeRgba(frame.PixelData, Framebuffer);
 
         FrameDecoded?.Invoke(this);
-        if (!hadChoice && Branches.Count > 0) ChoicePresented?.Invoke(this);
+        if (!hadChoice && IsChoicePoint) ChoicePresented?.Invoke(this);
+    }
+
+    /// <summary>Applies a segment's effect on the score as it starts playing.</summary>
+    private void ApplyScore(SegmentKind kind)
+    {
+        Score = kind switch
+        {
+            SegmentKind.ScoreUp => Math.Min(Score + 1, byte.MaxValue),
+            SegmentKind.ScoreDown => Math.Max(Score - 1, 0),
+            SegmentKind.ScoreReset => InitialScore,
+            _ => Score,
+        };
+    }
+
+    /// <summary>Jumps to a branch's destination and queues the rest of its play list.</summary>
+    private bool TakeBranch(BranchEntry branch)
+    {
+        if (!LoadTrack(branch.Track, remember: true)) return false;
+
+        _followOn.Clear();
+        _followOn.AddRange(branch.FollowOn);
+        return true;
     }
 
     /// <summary>Applies the branch logic at the end of a segment. Returns false when playback ends.</summary>
@@ -489,50 +541,46 @@ public sealed class VideoNowPlayer : IDisposable
         var header = CurrentHeader;
 
         // A viewer choice always wins.
-        if (_pendingChoiceSlot >= 0 && header is not null)
+        if (_pendingChoice is { } chosen && TakeBranch(chosen)) return true;
+
+        if (Navigation == NavigationPolicy.FollowHeader && header is not null)
         {
-            foreach (var branch in header.Branches)
+            // Register 0x4F names the next track outright; naming itself makes the segment
+            // repeat until the viewer acts. It is never set on choice segments.
+            if (header.ContinueTrack > 0 && LoadTrack(header.ContinueTrack, remember: true)) return true;
+
+            // Then whatever the branch that led here queued behind it.
+            while (_followOn.Count > 0)
             {
-                if (branch.Slot == _pendingChoiceSlot && branch.Track != 0 && LoadTrack(branch.Track, remember: true))
-                    return true;
+                var queued = _followOn[0];
+                _followOn.RemoveAt(0);
+                if (LoadTrack(queued, remember: true)) return true;
+            }
+
+            // A tagged segment is not a question for the viewer but a test of the score:
+            // the first entry whose threshold the score meets is taken.
+            if (header.Kind == SegmentKind.TaggedChoice)
+            {
+                foreach (var branch in header.Branches)
+                    if (Score >= branch.Tag && TakeBranch(branch)) return true;
             }
         }
 
-        switch (header?.Kind ?? SegmentKind.None)
+        if (header is { OffersChoice: true })
         {
-            case SegmentKind.Terminal:
-                return EndOfPlayback();
+            if (Timeout == ChoiceTimeout.Wait)
+            {
+                CurrentFrame = Math.Max(0, TrackFrameCount - 1);
+                State = TransportState.Paused;
+                return false;
+            }
 
-            case SegmentKind.Hub:
-            case SegmentKind.Restart:
-                if (header is { ContinueTrack: > 0 } && LoadTrack(header.ContinueTrack, remember: true)) return true;
-                break;
-
-            case SegmentKind.Choice:
-            case SegmentKind.TaggedChoice:
-                if (Timeout == ChoiceTimeout.Wait)
-                {
-                    CurrentFrame = Math.Max(0, TrackFrameCount - 1);
-                    State = TransportState.Paused;
-                    return false;
-                }
-
-                if (Timeout == ChoiceTimeout.FirstBranch
-                    && header is not null
-                    && header.Branches.Count > 0
-                    && LoadTrack(header.Branches[0].Track, remember: true))
-                {
-                    return true;
-                }
-
-                break;
-        }
-
-        if (Navigation == NavigationPolicy.FollowHeader
-            && header is { ContinueTrack: > 0 }
-            && LoadTrack(header.ContinueTrack, remember: true))
-        {
-            return true;
+            if (Timeout == ChoiceTimeout.FirstBranch
+                && header.Branches.Count > 0
+                && TakeBranch(header.Branches[0]))
+            {
+                return true;
+            }
         }
 
         var next = NextPlayableTrack(CurrentTrack);
@@ -543,7 +591,12 @@ public sealed class VideoNowPlayer : IDisposable
 
     private bool EndOfPlayback()
     {
-        if (Loop == LoopMode.Disc && LoadTrack(FirstPlayableTrack(), remember: false)) return true;
+        if (Loop == LoopMode.Disc && LoadTrack(FirstPlayableTrack(), remember: false))
+        {
+            _followOn.Clear();
+            Score = InitialScore;
+            return true;
+        }
 
         State = TransportState.Stopped;
         return false;
@@ -565,7 +618,7 @@ public sealed class VideoNowPlayer : IDisposable
 
         _reader = reader;
         CurrentFrame = 0;
-        _pendingChoiceSlot = -1;
+        _pendingChoice = null;
         _frameAudio = [];
         _audioPosition = 0;
 
@@ -573,9 +626,11 @@ public sealed class VideoNowPlayer : IDisposable
         return true;
     }
 
+    /// <summary>Moves to a track at the viewer's request, which abandons any queued play list.</summary>
     private void SelectTrackCore(int trackNumber)
     {
         if (!LoadTrack(trackNumber, remember: true)) return;
+        _followOn.Clear();
         DecodeCurrentFrameForDisplay();
     }
 
@@ -612,7 +667,7 @@ public sealed class VideoNowPlayer : IDisposable
     /// </summary>
     /// <remarks>
     /// Mastering leaves these between the title sequence and the first real segment: on
-    /// <i>Batman vs The Joker</i> tracks 3 and 4 are 24 seconds of black silence, and the
+    /// <i>Batman vs The Joker</i> tracks 3 and 4 are 217 frames of black silence, and the
     /// title's own register 0x4F steps straight over them to track 5. Disc order and track
     /// skipping pass over them as they pass over fill; selecting one directly still plays it.
     /// </remarks>

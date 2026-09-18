@@ -20,7 +20,8 @@ internal static class SyntheticDisc
     {
         var video = new byte[layout.VideoBytes];
 
-        // Sync words, then (value, register) pairs, then 0xFF padding to fill the header.
+        // Sync words, then (value, register) pairs four to a group with an 0xFF closing
+        // each group, then 0xFF padding to fill the header, as the discs are written.
         var offset = 0;
         for (var i = 0; i < layout.SyncRepeatCount; i++)
         {
@@ -28,10 +29,12 @@ internal static class SyntheticDisc
             offset += FrameLayout.SyncWord.Length;
         }
 
+        var pairs = 0;
         foreach (var (register, value) in registers)
         {
             video[offset++] = value;
             video[offset++] = (byte)register;
+            if (++pairs % 4 == 0) video[offset++] = 0xFF;
         }
 
         while (offset < layout.HeaderBytes) video[offset++] = 0xFF;

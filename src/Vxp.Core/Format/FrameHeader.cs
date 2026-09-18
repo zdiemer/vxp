@@ -43,7 +43,7 @@ public sealed class FrameHeader
     /// <summary>First register of the branch table.</summary>
     public const int RegBranchTableBase = 0x50;
 
-    /// <summary>Registers per branch table entry. Only the first two are populated.</summary>
+    /// <summary>Registers per branch table entry: a destination and up to three tracks to follow it.</summary>
     public const int BranchEntryStride = 4;
 
     /// <summary>Number of branch table entries.</summary>
@@ -75,8 +75,8 @@ public sealed class FrameHeader
     public SegmentKind Kind => (SegmentKind)this[RegSegmentKind];
 
     /// <summary>
-    /// Track to play when the segment ends without a branch being taken, or 0 for
-    /// "carry on with the next track in disc order".
+    /// Track to play when the segment ends without a branch being taken, or 0 when the
+    /// segment names none. A segment naming itself repeats until the viewer acts.
     /// </summary>
     public int ContinueTrack => this[RegContinueTrack];
 
@@ -84,22 +84,24 @@ public sealed class FrameHeader
     public bool OffersChoice => Kind is SegmentKind.Choice or SegmentKind.TaggedChoice;
 
     /// <summary>
-    /// The segment's branch table: up to <see cref="BranchEntryCount"/> destinations,
-    /// each occupying <see cref="BranchEntryStride"/> registers of which only the first
-    /// two are populated. Entries naming track 0 are unused and omitted.
+    /// The branch table of this frame: up to <see cref="BranchEntryCount"/> entries of
+    /// <see cref="BranchEntryStride"/> registers each. Entries naming track 0 are unused
+    /// and omitted.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The two bytes are read differently depending on <see cref="Kind"/>.
-    /// <see cref="SegmentKind.TaggedChoice"/> segments put a selector tag first and the
-    /// destination track second; every other kind puts the destination track first.
-    /// Reading a tagged table the plain way yields destination numbers beyond the end of
-    /// the disc, which is what makes the two cases tell apart.
+    /// An entry is a short play list: a destination track, then up to three more tracks
+    /// to play after it, ending at the first zero. On a
+    /// <see cref="SegmentKind.TaggedChoice"/> segment the first register is a score
+    /// threshold instead, and the play list starts in the second. Reading a tagged table
+    /// the plain way yields destination numbers beyond the end of the disc, which is what
+    /// makes the two cases tell apart.
     /// </para>
     /// <para>
-    /// Note that branch entries also appear on segments that are not choice points, most
-    /// often a lone entry in the last slot. Check <see cref="OffersChoice"/> before
-    /// treating the table as something the viewer can act on.
+    /// The table belongs to the frame, not the segment, and changes within a track: a
+    /// timed prompt is a run of frames whose table differs from the rest. A lone entry in
+    /// the last slot, standing for a whole segment, is how discs wire a button back to
+    /// their menu.
     /// </para>
     /// </remarks>
     public IReadOnlyList<BranchEntry> Branches
@@ -112,13 +114,17 @@ public sealed class FrameHeader
             for (var slot = 0; slot < BranchEntryCount; slot++)
             {
                 var register = RegBranchTableBase + slot * BranchEntryStride;
-                byte first = this[register];
-                byte second = this[register + 1];
+                var tag = tagged ? this[register] : (byte)0;
+                var first = tagged ? register + 1 : register;
 
-                var (tag, track) = tagged ? (first, second) : (second, first);
+                int track = this[first];
                 if (track == 0) continue;
 
-                entries.Add(new BranchEntry(slot, tag, track));
+                var then = new List<int>(BranchEntryStride - 1);
+                for (var r = first + 1; r < register + BranchEntryStride && this[r] != 0; r++)
+                    then.Add(this[r]);
+
+                entries.Add(new BranchEntry(slot, tag, track, then.ToArray()));
             }
 
             return entries;
@@ -137,49 +143,62 @@ public sealed class FrameHeader
         var header = videoBytes[..layout.HeaderBytes];
         var sync = FrameLayout.SyncWord;
 
+        // The header is laid out in nine-byte groups: either a sync word, or four
+        // (value, register) pairs closed by an 0xFF separator. Reading it by position
+        // rather than by scanning for 0xFF matters, because 0xFF is also a legal value:
+        // the low byte of the frame index is 0xFF on frames 255, 511 and so on.
+        const int group = 9;
         var i = 0;
-        while (i + 1 < header.Length)
+        while (i + group <= header.Length)
         {
-            // Skip the repeated sync words that open each block of the header.
-            if (i + sync.Length <= header.Length && header.Slice(i, sync.Length).SequenceEqual(sync))
+            if (header.Slice(i, sync.Length).SequenceEqual(sync))
             {
-                i += sync.Length;
+                i += group;
                 continue;
             }
 
-            // 0xFF separates groups of four pairs and pads the tail of a block.
-            if (header[i] == 0xFF)
+            for (var pair = i; pair < i + group - 1; pair += 2)
             {
-                i++;
-                continue;
+                // Padding is written as 0xFF pairs; no state register is numbered 0xFF.
+                if (header[pair + 1] != 0xFF) registers[header[pair + 1]] = header[pair];
             }
 
-            registers[header[i + 1]] = header[i];
-            i += 2;
+            i += group;
         }
 
         return new FrameHeader(registers);
     }
 }
 
-/// <summary>One selectable destination in a segment's branch table.</summary>
+/// <summary>One entry in a branch table: a play list that a button press, or the score, selects.</summary>
 /// <param name="Slot">Index of the entry, 0 through 5. This is what a button press selects.</param>
 /// <param name="Tag">
-/// The entry's second byte. On a <see cref="SegmentKind.TaggedChoice"/> segment this is
-/// a selector code drawn from a small fixed set that repeats across discs, so it most
-/// likely identifies the control the viewer presses; on other segments it is usually the
-/// number of the segment the entry belongs to. Its exact meaning is not established, and
-/// it is preserved here so tooling can study it.
+/// On a <see cref="SegmentKind.TaggedChoice"/> segment, the score the player must have
+/// reached for the entry to apply; entries are written highest first, and the first one
+/// the score meets is taken. Zero on every other kind of segment.
 /// </param>
 /// <param name="Track">Destination track number.</param>
-public readonly record struct BranchEntry(int Slot, byte Tag, int Track);
+/// <param name="Then">
+/// Tracks to play in order after the destination, whenever a track in the list names no
+/// continuation of its own in register 0x4F. Null or empty for a plain jump.
+/// </param>
+public readonly record struct BranchEntry(int Slot, byte Tag, int Track, IReadOnlyList<int>? Then = null)
+{
+    /// <summary>Tracks queued behind the destination; never null.</summary>
+    public IReadOnlyList<int> FollowOn => Then ?? [];
+
+    /// <summary>The whole play list: the destination, then <see cref="FollowOn"/>.</summary>
+    public IEnumerable<int> PlayList => FollowOn.Prepend(Track);
+}
 
 /// <summary>
-/// Value of register 0x4B, which tells the player how a segment behaves when it ends.
+/// Value of register 0x4B: what kind of segment this is, and what it does to the
+/// player's score when it starts playing.
 /// </summary>
 /// <remarks>
-/// The numbering comes from surveying interactive discs. Names describe observed
-/// behaviour rather than any published specification.
+/// The numbering comes from surveying retail discs; no published specification exists.
+/// The player keeps a single score, starting at <c>0x64</c> (100), which
+/// <see cref="TaggedChoice"/> segments branch on. See <c>docs/format.md</c>.
 /// </remarks>
 public enum SegmentKind : byte
 {
@@ -192,15 +211,15 @@ public enum SegmentKind : byte
     /// <summary>Offers a choice; the branch table names the destinations.</summary>
     Choice = 2,
 
-    /// <summary>Offers a choice using the tagged two-byte branch encoding.</summary>
+    /// <summary>Branches on the score: each entry opens with the threshold it needs.</summary>
     TaggedChoice = 3,
 
-    /// <summary>Plays through and stops rather than running on.</summary>
-    Terminal = 4,
+    /// <summary>Adds one to the score: a right answer, or a prompt met.</summary>
+    ScoreUp = 4,
 
-    /// <summary>Hub segment that returns to the track named by register 0x4F.</summary>
-    Hub = 5,
+    /// <summary>Takes one from the score: a wrong answer, or a prompt missed.</summary>
+    ScoreDown = 5,
 
-    /// <summary>End of the title; returns to the track named by register 0x4F.</summary>
-    Restart = 6,
+    /// <summary>Puts the score back to its starting value.</summary>
+    ScoreReset = 6,
 }

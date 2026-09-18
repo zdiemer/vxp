@@ -21,13 +21,17 @@ directly to an LCD controller and a DAC.
 - A trailing `fill` track usually pads out the disc and contains no video stream.
 - Some tracks carry a valid stream in which **every frame is blank**: all-zero pixels
   (black) and audio pinned at `0x80` (silence), under an ordinary `Linear` header. On
-  *Batman vs The Joker* tracks 3 and 4 are 24 seconds of this, sitting between the title
+  *Batman vs The Joker* tracks 3 and 4 are 217 frames of this, sitting between the title
   sequence and the first choice, and the title's register `0x4F` names track 5 — the
-  disc's own pointer steps over them. Played in disc order they look like a hang, so
-  `vxp` passes over them in disc order and track skipping as it does fill, and still
-  plays one if it is selected directly. Blank segments that offer a choice (Batman
-  tracks 22 and 23) or redirect are not skipped. Tracks that are black but carry sound,
-  such as Teen Titans track 2, are content and are not skipped either.
+  disc's own pointer steps over them. Paged through, or played in disc order, they look
+  like a hang, so `vxp` passes over them in disc order and track skipping as it does
+  fill, and still plays one if it is selected directly. Blank segments that offer a
+  choice (Batman tracks 22 and 23) or redirect are not skipped. Tracks that are black but
+  carry sound, such as Teen Titans track 2, are content and are not skipped either.
+- The four linear discs each hold a 181-frame black track with a little sound just
+  before their menu (Kids Next Door 16, Jimmy Neutron 19, the Teen Robot discs 16 and
+  20). Nothing branches to them and every `0x4F` steps past them, so a disc played the
+  way it declares never shows them.
 
 Ripping tools produce a cue sheet plus either one `.bin` per track or a single `.bin`.
 `vxp` handles both. The cue sheet's `TITLE` fields often preserve the mastering source
@@ -184,8 +188,9 @@ are identical on every disc examined. The interesting block is at the end:
 |----------|---------|
 | `0x49` / `0x4A` | Current frame index within the track, little-endian 16-bit |
 | `0x4B` | Segment kind (see below) |
+| `0x4C` | Set only on the title track; see below |
 | `0x4D` / `0x4E` | Total frames in this track, little-endian 16-bit |
-| `0x4F` | A track pointer; see "Not yet established" |
+| `0x4F` | The track to play next when no branch is taken; see below |
 | `0x50`, `0x54`, `0x58`, `0x5C`, `0x60`, `0x64` | Branch table, six entries of four registers |
 | `0x77` | Current track number |
 
@@ -195,78 +200,162 @@ prints the whole register file.
 
 ### Segment kinds (register `0x4B`)
 
-These names describe observed behaviour; no published specification exists.
+No published specification exists; these meanings come from surveying six retail discs
+(two interactive adventures and four episode discs with a quiz).
 
-| Value | Name | Behaviour |
-|------:|------|-----------|
-| 1 | `Linear` | Plays straight through, no viewer choice |
-| 2 | `Choice` | Offers a choice; branch table holds destinations |
-| 3 | `TaggedChoice` | Offers a choice using the tagged branch encoding |
-| 4 | `Terminal` | Plays through and stops |
-| 5 | `Hub` | Returns to the track named by `0x4F` |
-| 6 | `Restart` | End of title; returns to the track named by `0x4F` |
+| Value | Name | What it does |
+|------:|------|--------------|
+| 1 | `Linear` | Nothing special |
+| 2 | `Choice` | Puts a choice to the viewer; the branch table holds the answers |
+| 3 | `TaggedChoice` | Branches on the score (see below); the viewer is not asked |
+| 4 | `ScoreUp` | Adds one to the score as it starts |
+| 5 | `ScoreDown` | Takes one from the score as it starts |
+| 6 | `ScoreReset` | Puts the score back to `0x64` as it starts |
+
+Kinds 4, 5 and 6 were first read as "stop", "hub" and "restart", from where they sit.
+None of those holds up: every kind-4 segment on the quiz discs is the "right!" clip of a
+question, called from the question with the next question queued behind it (below), so
+it cannot stop; kind 5 is the "missed it" clip after a timed prompt on both adventures
+and the "wrong" clip in the Teen Titans quiz; kind 6 sits just before each quiz starts
+and after each result, and at the very end of Batman. What they share is what they do
+to a counter.
 
 ### The branch table
 
-Six entries, four registers apart, of which only the first two bytes of each are used.
-Entries naming track 0 are unused.
+Six entries, four registers apart, from `0x50`. Each entry is a **play list**: a
+destination track, then up to three more tracks to play after it, ending at the first
+zero. Entries naming track 0 are unused.
 
-**The segment kind selects how the two bytes are read.** On `TaggedChoice` segments the
-first byte is a selector tag and the second is the destination track. On every other kind
-the first byte is the destination and the second is something else. Reading a tagged
-table the plain way produces destinations past the end of the disc, which is exactly what
-makes the two cases distinguishable — and what makes it clear the rule is real rather
-than fitted.
+On a `TaggedChoice` segment the first register of each entry is a **score threshold**
+and the play list starts in the second. Reading a tagged table the plain way produces
+destinations past the end of the disc, which is exactly what makes the two cases
+distinguishable.
 
-From *Batman vs The Joker*, decoded by `vxp map`:
+**The table belongs to the frame, not the segment.** It changes within a track, and
+that is how timed prompts are cut. Batman track 32 offers nothing but the menu key
+(below) for its first 926 frames; for the next 12, key 5 goes to track 33 and every
+other key to 48; for the last 12, every key goes to 48; and `0x4F` names 48 for no
+press at all. Tracks 32-42,
+62-69 and 71-81 on Batman, and 4-8, 37-43 and 71-81 on Teen Titans, are chains of these:
+hit the prompt and the next scene plays, miss it and the failure clip does. `vxp map`
+reads every frame, so a prompt shows as two destinations under one key:
 
 ```
-  5     266         Choice     -  1:13  2:32  3:49  4:26
-  6      78         Choice     -  1:13  2:32  3:49  4:26
-  7      78         Choice     -  1:13  3:52  4:26
- 17     162         Choice     -  1:18  2:20(tag 18)  3:20(tag 18)  4:20(tag 18)
- 22      36   TaggedChoice     -  1:58(tag 6D)  2:57(tag 6C)  3:57(tag 6A)  4:56(tag 69)
- 24      36   TaggedChoice     -  1:59(tag 6D)  2:12(tag 6C)  3:10(tag 6A)  4:7(tag 69)
+ 32     950         Linear    48  1:48  2:48  3:48  4:48  5:33  5:48  6:24
 ```
 
-The shape of an interactive title is visible in the disc layout itself: runs of tracks
-with byte-identical lengths are parallel branches of the same scene. On this disc tracks
-6-12 are seven identical 78-frame segments and tracks 91-94 are four identical 289-frame
-segments.
+The sixth entry is usually a lone standing entry on otherwise plain segments — `6:24` on
+Batman, `6:17` on Kids Next Door — which is the button back to the disc's menu. `vxp`
+does not count it as a choice point.
 
-Tracks 22 and 24 use the **same tags in the same order** (`6D 6C 6A 69 68 64`) while
-pointing at completely different destinations. A value that is constant across segments
-while the destinations vary is behaving like an input code, which is the main reason to
-think the tag identifies the control the viewer presses.
+From *Batman vs The Joker*:
+
+```
+ 14      35         Choice     -  1:15>14  2:16>14  3:17  4:15>14  6:24
+ 17     162         Choice     -  1:18  2:20>24  3:20>24  4:20>24  6:14
+ 22      36   TaggedChoice     -  1:58(score>=6D)  2:57(score>=6C)  ...  6:23(score>=64)
+ 27     252         Linear    27  5:31>24  5:28>29>30>22  6:24
+```
+
+`2:20>24` plays track 20 and then 24; `5:28>29>30>22` plays three kind-4 clips — three
+points — and then 22.
+
+**Play lists.** The quiz discs show what the extra bytes are for. Each question is a
+`Choice` whose entries send the right key to a kind-4 clip and the wrong keys to a
+plain one, each followed by the next question: on Kids Next Door, question 30 is
+`1:37>31  2:37>31  3:36>31  4:37>31`. The last question's entries continue to the
+results. When a track in a play list ends and names no track of its own in `0x4F`,
+the next track of the list plays.
+
+**The score.** The player keeps one counter, which starts at `0x64` (100). Kinds 4, 5
+and 6 add one, take one, and reset it. A `TaggedChoice` segment takes the first entry,
+in slot order, whose threshold the score meets. The evidence:
+
+- Every tagged table in the corpus, nineteen of them, lists its thresholds in descending
+  order, and most end in a catch-all: `0x64`, the starting score, or `0x01`.
+- Where a table needs more than six outcomes it is split in two, the first ending in
+  `0x64` pointing at the second: Kids Next Door 40/41, Batman 22/23 and 24/25.
+- The number of outcomes matches the number of questions. Kids Next Door asks 8
+  questions and its results table has 9 outcomes, thresholds `0x64`-`0x6C`, one for each
+  possible count of right answers; *Raggedy Android*, *Teen Robot 3* and *Jimmy Neutron*
+  each ask 10 and have 11 outcomes, `0x64`-`0x6E`.
+- Teen Titans counts down instead: missed prompts and wrong answers are kind 5, and track
+  15's table reads `0x64`, `0x62`, `0x60`, `0x01` — no misses, one or two, three or
+  four, more.
+
+That the tag was an input code was the earlier reading, from tracks 22 and 24 sharing
+tags while pointing at different places. Thresholds explain that equally well: the same
+score bands, with different endings for each branch of the story.
+
+### Where a segment goes next
+
+When a segment ends, the player takes the first of these that applies:
+
+1. The entry the viewer chose, looked up in the frame on screen when the key was
+   pressed.
+2. Register **`0x4F`**, if it names a track. A segment naming itself repeats until the
+   viewer acts: Batman track 60 loops until key 3 is pressed, and track 27 until 5 or 6.
+3. The rest of the play list that led here.
+4. On a `TaggedChoice` segment, the score branch.
+5. On a `Choice` segment, whatever the viewer has set for a choice left unanswered.
+6. The next track in disc order.
+
+`0x4F` holds this rule on every track of all six discs. It is constant within every
+track, it is never set on a choice segment, and wherever it is set it names the right
+place:
+
+| Where | `0x4F` names | So |
+|-------|--------------|----|
+| The title sequence (track 2) | 5 on Batman, 4 on Teen Titans, the menu on the other four | Past Batman's blank tracks, and past the episodes to the menu |
+| End credits on the episode discs | The menu | Back to the menu |
+| A timed prompt | The failure clip, the same track the prompt's closing frames send every key to | No press is a miss |
+| Teen Titans' missed-prompt clips 10-14 | The next scene, 5-9 | 4 → 10 → 5 → 11 → 6 ... → 9 → 15 |
+| Batman's missed-prompt clips 70 and 83 | The start of the chain, 62 and 71 | Try again |
+| Batman 48, 56-58 | 24 | Back to the story map |
+| Batman 91-94 | 95 | Every ending leads to the epilogue |
+| Batman 96, kind 6 | 2 | Start again from the title |
+| Batman 27 and 60 | Themselves | Wait for a key |
+
+The one track that breaks the pattern is Batman 79, a prompt in the 71-81 chain whose
+`0x4F` is 0 where its neighbours have 83; its closing frames still send every key to 83.
+It reads as a mastering slip, and with `0x4F` unset it falls through to disc order.
+
+The earlier worry about `0x4F` — that honouring it "would skip large stretches of a disc"
+— was right about the effect and wrong about the intent. What gets skipped is the
+episodes, which the title sends past to the menu that plays them, and the rest of a
+chain of prompts after a miss. `vxp` follows it by default; `--navigation discOrder` plays
+every segment in turn instead, which is useful for watching everything on a disc.
+
+Teen Titans, played in disc order, looped for ever: 4, 5 ... 9, 10, and 10 (a
+missed-prompt clip naming 5) back to 5. Followed, it runs
+4 → 10 → 5 → 11 → 6 → 12 → 7 → 13 → 8 → 14 → 9 → 15, and track 15's score branch picks
+the ending for five misses.
+
+Register `0x4C` is set only on the title track: 3 on both adventures, and on the episode
+discs the first track after the episodes and credits (16 on Kids Next Door and
+*Raggedy Android*, 18 on Jimmy Neutron, 19 on *Teen Robot 3*). What reads it is
+not known.
 
 ## Not yet established
 
 These are open questions. `vxp` is deliberately conservative about them.
 
-**Register `0x4F`.** A valid track number, but its role is unclear. Groups of tracks share
-one value — tracks 32-42 all name 48, tracks 62-69 all name 70, tracks 71-81 all name 83
-— and the named track sometimes points back into the group. That is consistent with a
-"continue here after this group" pointer, and also with a chapter or hub identifier.
-On every disc examined the title sequence (track 2) sets it: to the first scene on the
-interactive titles (Batman names 5, past its blank tracks 3 and 4) and to the episode
-menu on the linear ones (a choice segment after the episodes). Two Batman tracks (27 and
-60) name themselves.
-Treating it as an unconditional next-track pointer would skip large stretches of a disc
-in linear playback, so `vxp` ignores it by default and honours it only for `Hub` and
-`Restart` segments. `--follow-header` enables the aggressive reading for experimentation.
+**Which key is which.** The six slots are clearly six controls. On the episode discs'
+chapter screens slot 2 steps forward, slot 4 back, slot 5 plays and slot 6 returns to
+the menu, which fits four directions, a select and a menu key. `vxp` maps slots to keys
+1-6 and to the controller's D-pad, X and Y.
 
-**The selector tag.** On `TaggedChoice` segments the tags come from a small repeating set
-(`0x01`, `0x64`, `0x65`, `0x67`-`0x6D`). Ten or so distinct values suggests a keypad, but
-which physical control each one means has not been pinned down. `vxp` currently maps
-branch **slots** to number keys 1-6 rather than trying to interpret the tag.
-
-**The second byte on non-tagged segments.** Usually the segment's own track number, and
-sometimes a different track — plausibly "where to continue after the branch finishes".
+**An unanswered choice.** No `Choice` segment names a track in `0x4F`, so what the
+hardware does when one ends unanswered is not on the disc. Taking the first entry, the
+`vxp` default, is plainly wrong in places — it answers every quiz question with key 1
+and makes Batman's `Choice`-kind prompt at track 84 succeed on its own — and the chapter
+screens on the episode discs cycle for ever under it. Repeating the segment until a key
+is pressed fits every case seen, but is not yet what `vxp` does.
 
 **When a choice is committed.** `vxp` records a keypress and jumps at the end of the
-segment, which fits how these discs are cut: the choice window is the tail of a short
-segment and every destination is a whole separate track. Whether the hardware jumps
-immediately on press has not been determined.
+segment. Timed prompts work either way, since their closing frames send every key to the
+failure clip. Whether the hardware jumps immediately on press has not been determined;
+the menu key on a long episode suggests it does.
 
 **Black and white VideoNow.** A different interleave and a 4-bit greyscale 80 x 80
 picture. Detected and reported but not yet decoded.

@@ -325,7 +325,7 @@ public static class SessionCommand
 
         private void Status()
         {
-            var branches = _player.Branches.Select(b => new { slot = b.Slot + 1, track = b.Track, tag = b.Tag });
+            var branches = _player.Branches.Select(b => new { slot = b.Slot + 1, track = b.Track, tag = b.Tag, then = b.FollowOn });
 
             if (_json)
             {

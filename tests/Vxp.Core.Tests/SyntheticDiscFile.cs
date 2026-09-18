@@ -12,6 +12,15 @@ namespace Vxp.Tests;
 /// <param name="Title">Cue sheet title.</param>
 /// <param name="Empty">When true the track holds no VideoNow stream, like end-of-disc padding.</param>
 /// <param name="Blank">When true every frame is black and silent, though the stream is valid.</param>
+/// <param name="PlayLists">
+/// Whole play lists per slot (destination, then queued tracks), used instead of
+/// <paramref name="Branches"/> when given.
+/// </param>
+/// <param name="Thresholds">Score thresholds per slot for a tagged segment; 0x6D when omitted.</param>
+/// <param name="Prompts">
+/// Timed prompts: runs of frames, first to last inclusive, whose branch table replaces the
+/// segment's own.
+/// </param>
 public sealed record TrackSpec(
     int Number,
     int Frames,
@@ -20,7 +29,10 @@ public sealed record TrackSpec(
     int[]? Branches = null,
     string? Title = null,
     bool Empty = false,
-    bool Blank = false);
+    bool Blank = false,
+    int[][]? PlayLists = null,
+    byte[]? Thresholds = null,
+    (int First, int Last, int[] Branches)[]? Prompts = null);
 
 /// <summary>
 /// Writes a playable VideoNow XP disc image to a temporary directory, so the player can
@@ -105,20 +117,23 @@ public sealed class SyntheticDiscFile : IDisposable
             [FrameHeader.RegTrackNumber] = (byte)spec.Number,
         };
 
-        var branches = spec.Branches ?? [];
-        for (var slot = 0; slot < branches.Length && slot < FrameHeader.BranchEntryCount; slot++)
+        var playLists = spec.PlayLists ?? (spec.Branches ?? []).Select(track => new[] { track }).ToArray();
+        foreach (var prompt in spec.Prompts ?? [])
+        {
+            if (frameIndex >= prompt.First && frameIndex <= prompt.Last)
+                playLists = prompt.Branches.Select(track => new[] { track }).ToArray();
+        }
+
+        for (var slot = 0; slot < playLists.Length && slot < FrameHeader.BranchEntryCount; slot++)
         {
             var register = FrameHeader.RegBranchTableBase + slot * FrameHeader.BranchEntryStride;
 
+            // A tagged entry opens with the score it needs; the play list follows.
             if (spec.Kind == SegmentKind.TaggedChoice)
-            {
-                registers[register] = 0x6D;                    // selector tag
-                registers[register + 1] = (byte)branches[slot]; // destination
-            }
-            else
-            {
-                registers[register] = (byte)branches[slot];
-            }
+                registers[register++] = spec.Thresholds is { } thresholds ? thresholds[slot] : (byte)0x6D;
+
+            foreach (var track in playLists[slot])
+                registers[register++] = (byte)track;
         }
 
         // Stamp the track and frame into the picture so tests can tell frames apart.

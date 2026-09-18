@@ -643,7 +643,7 @@ public static class Menus
                     Set = v => emulation.InstantChoices = v,
                 },
                 EnumChoice("Segment order", () => emulation.Navigation, v => emulation.Navigation = v,
-                    "followHeader obeys register 0x4F, whose meaning is not fully established."),
+                    "followHeader goes where the disc says; discOrder plays every segment in turn."),
             ],
         };
     }

@@ -119,6 +119,61 @@ public class FrameHeaderTests
     }
 
     [Fact]
+    public void AValueOf0xFFIsNotMistakenForASeparator()
+    {
+        // Frame 255 of a track: the low byte of the frame index is 0xFF, and reading the
+        // header as "skip every 0xFF" slipped a byte and lost the registers after it.
+        var header = Parse(new Dictionary<int, byte>
+        {
+            [FrameHeader.RegFrameIndexLow] = 0xFF,
+            [FrameHeader.RegFrameIndexHigh] = 0x00,
+            [FrameHeader.RegSegmentKind] = 1,
+            [FrameHeader.RegTrackNumber] = 32,
+        });
+
+        Assert.Equal(255, header.FrameIndex);
+        Assert.Equal(SegmentKind.Linear, header.Kind);
+        Assert.Equal(32, header.TrackNumber);
+    }
+
+    [Fact]
+    public void ABranchEntryIsAPlayList()
+    {
+        // From Batman track 27: key 5 plays 28, 29 and 30, then goes to 22.
+        var register = FrameHeader.RegBranchTableBase + 4 * FrameHeader.BranchEntryStride;
+        var header = Parse(new Dictionary<int, byte>
+        {
+            [FrameHeader.RegSegmentKind] = 1,
+            [register] = 28,
+            [register + 1] = 29,
+            [register + 2] = 30,
+            [register + 3] = 22,
+        });
+
+        var branch = Assert.Single(header.Branches);
+        Assert.Equal(4, branch.Slot);
+        Assert.Equal(28, branch.Track);
+        Assert.Equal([29, 30, 22], branch.FollowOn);
+    }
+
+    [Fact]
+    public void ATaggedEntryOpensWithItsThreshold()
+    {
+        // From Teen Titans track 15: at a score of 100 or more, play 16 and then 17.
+        var header = Parse(new Dictionary<int, byte>
+        {
+            [FrameHeader.RegSegmentKind] = 3,
+            [FrameHeader.RegBranchTableBase] = 0x64,
+            [FrameHeader.RegBranchTableBase + 1] = 16,
+            [FrameHeader.RegBranchTableBase + 2] = 17,
+        });
+
+        var branch = Assert.Single(header.Branches);
+        Assert.Equal(0x64, branch.Tag);
+        Assert.Equal([16, 17], branch.PlayList);
+    }
+
+    [Fact]
     public void ReadsTheContinuePointer()
     {
         var header = Parse(new Dictionary<int, byte>
@@ -127,7 +182,7 @@ public class FrameHeaderTests
             [FrameHeader.RegContinueTrack] = 62,
         });
 
-        Assert.Equal(SegmentKind.Hub, header.Kind);
+        Assert.Equal(SegmentKind.ScoreDown, header.Kind);
         Assert.Equal(62, header.ContinueTrack);
     }
 }

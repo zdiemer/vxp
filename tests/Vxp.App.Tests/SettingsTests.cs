@@ -23,6 +23,27 @@ public class SettingsStoreTests
     }
 
     [Fact]
+    public void OldFilesMoveFromTheOldDefaultNavigationToTheNewOne()
+    {
+        var old = new VxpSettings { Version = 1 };
+        old.Emulation.Navigation = NavigationPolicy.DiscOrder;
+
+        var migrated = SettingsStore.Migrate(old);
+
+        Assert.Equal(NavigationPolicy.FollowHeader, migrated.Emulation.Navigation);
+        Assert.Equal(VxpSettings.CurrentVersion, migrated.Version);
+    }
+
+    [Fact]
+    public void ACurrentFileKeepsDiscOrderIfItWasChosen()
+    {
+        var current = new VxpSettings();
+        current.Emulation.Navigation = NavigationPolicy.DiscOrder;
+
+        Assert.Equal(NavigationPolicy.DiscOrder, SettingsStore.Migrate(current).Emulation.Navigation);
+    }
+
+    [Fact]
     public void PathsAreUnique()
     {
         var paths = SettingsStore.Enumerate(new VxpSettings()).Select(e => e.Path).ToArray();

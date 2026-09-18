@@ -108,7 +108,7 @@ public static class DiscCommands
     public static int Map(CommandLine args)
     {
         using var disc = DiscImage.Open(args.RequireCue());
-        var map = DiscMap.Build(disc);
+        var map = DiscMap.Build(disc, everyFrame: true);
 
         if (args.Json)
         {
@@ -133,7 +133,7 @@ public static class DiscCommands
             return 0;
         }
 
-        Console.WriteLine($"{"Trk",3}  {"Frames",6}  {"Kind",13}  {"0x4F",4}  Branches (key:track)");
+        Console.WriteLine($"{"Trk",3}  {"Frames",6}  {"Kind",13}  {"0x4F",4}  Branches (key:tracks)");
         Console.WriteLine(new string('-', 78));
 
         foreach (var track in map.PlayableTracks)
@@ -141,7 +141,7 @@ public static class DiscCommands
             var branches = track.Branches.Count == 0
                 ? "-"
                 : string.Join("  ", track.Branches.Select(b =>
-                    b.Tag == 0 ? $"{b.Slot + 1}:{b.Track}" : $"{b.Slot + 1}:{b.Track}(tag {b.Tag:X2})"));
+                    $"{b.Slot + 1}:{string.Join(">", b.PlayList)}" + (b.Tag == 0 ? "" : $"(score>={b.Tag:X2})")));
 
             var continueTrack = track.ContinueTrack == 0 ? "-" : track.ContinueTrack.ToString();
             Console.WriteLine($"{track.Number,3}  {track.FrameCount,6}  {track.Kind,13}  {continueTrack,4}  {branches}");
@@ -163,7 +163,7 @@ public static class DiscCommands
     public static int Graph(CommandLine args)
     {
         using var disc = DiscImage.Open(args.RequireCue());
-        var map = DiscMap.Build(disc);
+        var map = DiscMap.Build(disc, everyFrame: true);
         var format = args.Value("format", "dot").ToLowerInvariant();
 
         var text = format switch
@@ -191,25 +191,26 @@ public static class DiscCommands
 
         foreach (var track in map.PlayableTracks)
         {
-            var shape = track.OffersChoice ? "diamond" : track.Kind == SegmentKind.Terminal ? "doublecircle" : "box";
+            var shape = track.OffersChoice ? "diamond" : "box";
             text.AppendLine($"  t{track.Number} [label=\"{track.Number}\\n{track.Duration:mm\\:ss}\", shape={shape}];");
         }
 
         foreach (var track in map.PlayableTracks)
         {
+            // Branches can repeat a destination under several keys, and a timed prompt
+            // can put different destinations under one key; draw each pair once.
+            var drawn = new HashSet<(int Slot, int Track)>();
             foreach (var branch in track.Branches)
             {
-                if (map.Find(branch.Track)?.HasVideo != true) continue;
+                if (map.Find(branch.Track)?.HasVideo != true || !drawn.Add((branch.Slot, branch.Track))) continue;
                 text.AppendLine($"  t{track.Number} -> t{branch.Track} [label=\"{branch.Slot + 1}\"];");
             }
 
-            if (!track.OffersChoice)
+            // Where the segment goes unasked: register 0x4F, a queued play list, or disc order.
+            foreach (var next in map.Successors(track.Number))
             {
-                foreach (var next in map.Successors(track.Number))
-                {
-                    if (track.Branches.Any(b => b.Track == next)) continue;
-                    text.AppendLine($"  t{track.Number} -> t{next} [style=dashed];");
-                }
+                if (track.Branches.Any(b => b.Track == next)) continue;
+                text.AppendLine($"  t{track.Number} -> t{next} [style=dashed];");
             }
         }
 

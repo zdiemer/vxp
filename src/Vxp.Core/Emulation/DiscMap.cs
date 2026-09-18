@@ -12,9 +12,9 @@ namespace Vxp.Emulation;
 /// <param name="DeclaredFrameCount">Frame count the disc declares in its own header.</param>
 /// <param name="Duration">Running time at the disc's exact frame rate.</param>
 /// <param name="ByteLength">Size of the track in bytes.</param>
-/// <param name="Kind">How the segment behaves when it ends.</param>
-/// <param name="ContinueTrack">Value of register 0x4F, whose role is not fully established.</param>
-/// <param name="Branches">Destinations the segment's branch table names.</param>
+/// <param name="Kind">What kind of segment this is, from its first frame.</param>
+/// <param name="ContinueTrack">Register 0x4F: the track to play next when no branch is taken, or 0.</param>
+/// <param name="Branches">Branch table entries: those of the first frame, or of every frame when surveyed in full.</param>
 public sealed record TrackInfo(
     int Number,
     string? Title,
@@ -44,7 +44,7 @@ public sealed record TrackInfo(
 /// branch graph that connects them.
 /// </summary>
 /// <remarks>
-/// Building a map reads the first frame of every track, which is fast enough to do on
+/// Building a map reads the first frame header of every track, which is fast enough to do on
 /// load and gives both the track browser and the command line one shared model.
 /// </remarks>
 public sealed class DiscMap
@@ -78,7 +78,13 @@ public sealed class DiscMap
     public bool IsInteractive => Tracks.Any(t => t.OffersChoice);
 
     /// <summary>Surveys <paramref name="disc"/>.</summary>
-    public static DiscMap Build(DiscImage disc)
+    /// <param name="disc">The disc to survey.</param>
+    /// <param name="everyFrame">
+    /// Read the header of every frame rather than only the first, so that timed prompts
+    /// partway through a segment appear among its branches. That reads the whole disc,
+    /// so it suits the command line better than loading a disc to play.
+    /// </param>
+    public static DiscMap Build(DiscImage disc, bool everyFrame = false)
     {
         var tracks = new List<TrackInfo>(disc.Tracks.Count);
 
@@ -94,7 +100,20 @@ public sealed class DiscMap
             }
 
             var reader = new TrackReader(track, layout);
-            var header = reader.ReadFrame(0)?.ReadHeader();
+            var header = reader.ReadHeader(0);
+            var branches = header?.Branches ?? [];
+
+            if (everyFrame && header is not null)
+            {
+                var seen = new List<BranchEntry>(branches);
+                for (var i = 1; i < reader.FrameCount; i++)
+                {
+                    foreach (var branch in reader.ReadHeader(i)?.Branches ?? [])
+                        if (!seen.Any(b => SameEntry(b, branch))) seen.Add(branch);
+                }
+
+                branches = seen.OrderBy(b => b.Slot).ToArray();
+            }
 
             tracks.Add(new TrackInfo(
                 track.Number,
@@ -107,7 +126,7 @@ public sealed class DiscMap
                 track.ByteLength,
                 header?.Kind ?? SegmentKind.None,
                 header?.ContinueTrack ?? 0,
-                header?.Branches ?? []));
+                branches));
         }
 
         return new DiscMap(disc.Name, FormatDetector.Detect(disc), tracks);
@@ -143,7 +162,11 @@ public sealed class DiscMap
         return seen.Order().ToArray();
     }
 
-    /// <summary>Tracks that can directly follow <paramref name="number"/>.</summary>
+    /// <summary>
+    /// Tracks that can directly follow <paramref name="number"/> when the disc is played
+    /// the way it declares: its branches, then the track register 0x4F names, or failing
+    /// that the tracks a branch into it queues behind it, or failing that disc order.
+    /// </summary>
     public IReadOnlyList<int> Successors(int number)
     {
         var track = Find(number);
@@ -151,28 +174,47 @@ public sealed class DiscMap
 
         var next = new List<int>();
 
-        foreach (var branch in track.Branches)
-        {
-            if (Find(branch.Track)?.HasVideo == true) next.Add(branch.Track);
-        }
+        foreach (var branch in track.Branches) next.Add(branch.Track);
 
-        if (track.Kind is SegmentKind.Hub or SegmentKind.Restart
-            && Find(track.ContinueTrack)?.HasVideo == true)
+        if (track.ContinueTrack > 0)
         {
             next.Add(track.ContinueTrack);
         }
-
-        if (track.Kind is not (SegmentKind.Terminal or SegmentKind.Restart) && !track.OffersChoice)
+        else
         {
-            var following = Tracks
-                .SkipWhile(t => t.Number != number)
-                .Skip(1)
-                .FirstOrDefault(t => t.HasVideo);
+            var queued = QueuedAfter(number);
+            next.AddRange(queued);
 
-            if (following is not null) next.Add(following.Number);
+            // A choice segment goes nowhere unasked; any other segment falls through to
+            // disc order unless a branch into it queues what comes next.
+            if (!track.OffersChoice && queued.Count == 0)
+            {
+                var following = Tracks
+                    .SkipWhile(t => t.Number != number)
+                    .Skip(1)
+                    .FirstOrDefault(t => t.HasVideo);
+
+                if (following is not null) next.Add(following.Number);
+            }
         }
 
-        return next.Distinct().ToArray();
+        return next.Where(n => Find(n)?.HasVideo == true).Distinct().ToArray();
+    }
+
+    /// <summary>Tracks that branch play lists queue directly behind <paramref name="number"/>.</summary>
+    private IReadOnlyList<int> QueuedAfter(int number)
+    {
+        var after = new List<int>();
+
+        foreach (var track in PlayableTracks)
+        foreach (var branch in track.Branches)
+        {
+            var list = branch.PlayList.ToArray();
+            for (var i = 0; i + 1 < list.Length; i++)
+                if (list[i] == number) after.Add(list[i + 1]);
+        }
+
+        return after;
     }
 
     /// <summary>
@@ -185,12 +227,15 @@ public sealed class DiscMap
 
         foreach (var track in PlayableTracks)
         {
-            foreach (var branch in track.Branches) referenced.Add(branch.Track);
-            if (track.Kind is SegmentKind.Hub or SegmentKind.Restart) referenced.Add(track.ContinueTrack);
+            foreach (var branch in track.Branches) referenced.UnionWith(branch.PlayList);
+            if (track.ContinueTrack > 0 && track.ContinueTrack != track.Number) referenced.Add(track.ContinueTrack);
         }
 
         return PlayableTracks.Where(t => !referenced.Contains(t.Number)).Select(t => t.Number).ToArray();
     }
+
+    private static bool SameEntry(BranchEntry a, BranchEntry b) =>
+        a.Slot == b.Slot && a.Tag == b.Tag && a.PlayList.SequenceEqual(b.PlayList);
 
     /// <summary>
     /// Runs of consecutive tracks with byte-identical lengths, which on interactive discs

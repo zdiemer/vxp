@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Vxp.Emulation;
 
 namespace Vxp.Config;
 
@@ -79,7 +80,7 @@ public static class SettingsStore
 
         try
         {
-            return JsonSerializer.Deserialize<VxpSettings>(File.ReadAllText(path), Json) ?? new VxpSettings();
+            return Migrate(JsonSerializer.Deserialize<VxpSettings>(File.ReadAllText(path), Json) ?? new VxpSettings());
         }
         catch (JsonException)
         {
@@ -94,6 +95,23 @@ public static class SettingsStore
 
             return new VxpSettings();
         }
+    }
+
+    /// <summary>Brings settings written by an older version up to the current schema.</summary>
+    public static VxpSettings Migrate(VxpSettings settings)
+    {
+        if (settings.Version < 2)
+        {
+            // Version 1 defaulted to disc order because register 0x4F was not understood,
+            // and saved that default like any other value. Following the disc is now both
+            // understood and the default, so a stored disc order is taken to be the old
+            // default rather than a choice.
+            if (settings.Emulation.Navigation == NavigationPolicy.DiscOrder)
+                settings.Emulation.Navigation = NavigationPolicy.FollowHeader;
+        }
+
+        settings.Version = VxpSettings.CurrentVersion;
+        return settings;
     }
 
     /// <summary>Writes the settings file, creating its directory if need be.</summary>
