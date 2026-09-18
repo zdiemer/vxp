@@ -140,4 +140,24 @@ public class ArchiveTests
 
         Assert.Throws<FileNotFoundException>(() => DiscImage.Open(zip));
     }
+
+    [Fact]
+    public void ABackslashInACueSheetFileNameIsAFolder()
+    {
+        // Cue sheets come from Windows tools, but are opened on Linux and macOS too,
+        // where a backslash is an ordinary file name character.
+        using var disc = SyntheticDiscFile.Create(new TrackSpec(1, 3));
+        using var loose = DiscImage.Open(disc.CuePath);
+        var expected = ReadAll(loose.Tracks[0]);
+
+        var folder = Path.Combine(disc.Directory, "tracks");
+        Directory.CreateDirectory(folder);
+        File.Copy(Path.Combine(disc.Directory, "disc (Track 01).bin"), Path.Combine(folder, "disc (Track 01).bin"));
+
+        var cue = Path.Combine(disc.Directory, "nested.cue");
+        File.WriteAllText(cue, File.ReadAllText(disc.CuePath).Replace("\"disc (Track 01).bin\"", "\"tracks\\disc (Track 01).bin\""));
+
+        using var nested = DiscImage.Open(cue);
+        Assert.Equal(expected, ReadAll(nested.Tracks[0]));
+    }
 }

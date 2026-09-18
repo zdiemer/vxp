@@ -117,7 +117,7 @@ public sealed unsafe class PlayerWindow : IDisposable
         _adjust = PictureAdjustment.FromSettings(settings.Video);
         _displayFrame = CurrentFramebuffer();
 
-        _sdl = Sdl.GetApi();
+        _sdl = LoadSdl();
         if (_sdl.Init(Sdl.InitVideo | Sdl.InitAudio | Sdl.InitGamecontroller) != 0)
             throw new SdlException($"SDL_Init failed: {_sdl.GetErrorS()}");
 
@@ -154,9 +154,23 @@ public sealed unsafe class PlayerWindow : IDisposable
         };
 
         AudioSpec have;
+        var silent = false;
         _audioDevice = OpenAudio(&want, &have);
         if (_audioDevice == 0)
-            throw new SdlException($"SDL_OpenAudioDevice failed: {_sdl.GetErrorS()}");
+        {
+            // No sound device at all is common on Linux: a machine with no sound server,
+            // a container, a remote X session. Playback is clocked by the audio queue
+            // draining, so SDL's dummy driver, which drains it in real time and plays
+            // nothing, keeps the picture at the right pace, in silence.
+            var reason = _sdl.GetErrorS();
+            _sdl.AudioQuit();
+            if (_sdl.AudioInit("dummy") == 0) _audioDevice = _sdl.OpenAudioDevice((byte*)null, 0, &want, &have, 0);
+            if (_audioDevice == 0)
+                throw new SdlException($"SDL_OpenAudioDevice failed: {reason}");
+
+            Console.Error.WriteLine($"vxp: no sound device ({reason}); playing silently.");
+            silent = true;
+        }
 
         _sdl.PauseAudioDevice(_audioDevice, 0);
         OpenController();
@@ -171,6 +185,7 @@ public sealed unsafe class PlayerWindow : IDisposable
 
         if (settings.Video.Fullscreen) SetFullscreen(true);
         if (settings.Emulation.AutoPlay) _player?.Play();
+        if (silent) _menu.Toast("No sound device: playing silently", 5);
     }
 
     // ------------------------------------------------------------ disc swapping
@@ -528,6 +543,25 @@ public sealed unsafe class PlayerWindow : IDisposable
 
         _menuBar = replacement;
         previous.Dispose();
+    }
+
+    /// <summary>
+    /// Binds SDL2. Silk.NET tries the system's copy first and then the one shipped beside
+    /// the executable, so this fails only when neither is there.
+    /// </summary>
+    private static Sdl LoadSdl()
+    {
+        try
+        {
+            return Sdl.GetApi();
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DllNotFoundException)
+        {
+            var hint = OperatingSystem.IsWindows() ? "SDL2.dll belongs beside vxp.exe"
+                : OperatingSystem.IsMacOS() ? "libSDL2-2.0.dylib belongs beside vxp, or install it with: brew install sdl2"
+                : "libSDL2-2.0.so belongs beside vxp, or install your distribution's SDL2 package (libsdl2-2.0-0 on Debian and Ubuntu)";
+            throw new SdlException($"SDL2 could not be loaded: {hint}.");
+        }
     }
 
     private uint OpenAudio(AudioSpec* want, AudioSpec* have)

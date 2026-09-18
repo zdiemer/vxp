@@ -1,9 +1,13 @@
-# Build and publish the Windows binary for a tagged release.
+# Build and publish the binaries for a tagged release.
 #
-# The build is self-contained and single-file, so the player runs on a machine with
-# no .NET runtime installed. SDL2.dll ships beside the exe rather than bundled into
+# Every build is self-contained and single-file, so the player runs on a machine with
+# no .NET runtime installed. SDL2 ships beside the executable rather than bundled into
 # it: Silk.NET finds its native library by probing the application directory, and a
-# loose DLL there needs nothing extracted at start-up.
+# loose library there needs nothing extracted at start-up. On Linux and macOS a system
+# SDL2, when there is one, is tried before the bundled copy.
+#
+# Each runner tests, publishes and packages its own platforms; one job at the end
+# makes the release from all of them, so a failure anywhere ships nothing.
 name: release
 
 on:
@@ -12,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to build and attach the artifact to"
+        description: "Existing tag to build and attach the artifacts to"
         required: true
 
 permissions:
@@ -21,10 +25,48 @@ permissions:
 env:
   DOTNET_NOLOGO: '1'
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Check the tag matches the project version
+        shell: pwsh
+        run: |
+          # `vxp version` prints the assembly version, so a tag that disagrees with
+          # the project file ships a binary that misreports itself.
+          $want = $env:TAG.TrimStart("v")
+          $have = ([xml](Get-Content src/Vxp/Vxp.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if ($want -ne $have) {
+            throw "tag $env:TAG implies version $want, but src/Vxp/Vxp.csproj says $have"
+          }
+          "version $have matches tag $env:TAG"
+
+  build:
+    needs: version
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: windows-latest
+            rids: win-x64
+          # linux-arm64 is cross-published: .NET needs no arm64 machine to build it,
+          # only to run it, and the x64 build is the one smoke-tested here.
+          - os: ubuntu-latest
+            rids: linux-x64 linux-arm64
+          # macOS builds are published on a Mac because the SDK signs them there
+          # (ad hoc), and Apple silicon refuses to run an unsigned binary at all.
+          - os: macos-latest
+            rids: osx-arm64 osx-x64
+
+    runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v5
         with:
@@ -34,29 +76,16 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Check the tag matches the project version
-        shell: pwsh
-        run: |
-          # `vxp version` prints the assembly version, so a tag that disagrees with
-          # the project file ships a binary that misreports itself.
-          $tag = "${{ github.event.inputs.tag }}"
-          if (-not $tag) { $tag = "${{ github.ref_name }}" }
-          $want = $tag.TrimStart("v")
-          $have = ([xml](Get-Content src/Vxp/Vxp.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
-          if ($want -ne $have) {
-            throw "tag $tag implies version $want, but src/Vxp/Vxp.csproj says $have"
-          }
-          "version $have matches tag $tag"
-
       - name: Test
         run: dotnet test -c Release
 
-      - name: Publish
-        run: dotnet publish src/Vxp -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:DebugType=none -o publish
-
-      - name: Package
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          dotnet publish src/Vxp -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:DebugType=none -o publish
+          if ($LASTEXITCODE -ne 0) { throw "publish failed" }
+
           foreach ($file in "publish/vxp.exe", "publish/SDL2.dll") {
             if (-not (Test-Path $file)) { throw "missing $file" }
           }
@@ -70,21 +99,91 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or -not $version) { throw "vxp.exe version failed" }
           "built: $version"
 
-          New-Item -ItemType Directory -Force staging | Out-Null
+          New-Item -ItemType Directory -Force staging, dist | Out-Null
           Copy-Item publish/vxp.exe, publish/SDL2.dll, README.md, LICENSE staging/
-          Compress-Archive -Path staging/* -DestinationPath vxp-windows-x86_64.zip
-          Get-FileHash vxp-windows-x86_64.zip -Algorithm SHA256
+          Compress-Archive -Path staging/* -DestinationPath dist/vxp-windows-x86_64.zip
+
+      - name: Package (Linux, macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for rid in ${{ matrix.rids }}; do
+            case "$rid" in
+              linux-x64)   name=vxp-linux-x86_64; lib=libSDL2-2.0.so ;;
+              linux-arm64) name=vxp-linux-arm64;  lib=libSDL2-2.0.so ;;
+              osx-arm64)   name=vxp-macos-arm64;  lib=libSDL2-2.0.dylib ;;
+              osx-x64)     name=vxp-macos-x86_64; lib=libSDL2-2.0.dylib ;;
+              *) echo "no package name for $rid" >&2; exit 1 ;;
+            esac
+
+            out="publish/$rid"
+            dotnet publish src/Vxp -c Release -r "$rid" --self-contained -p:PublishSingleFile=true -p:DebugType=none -o "$out"
+            for file in "$out/vxp" "$out/$lib"; do
+              [ -f "$file" ] || { echo "missing $file" >&2; exit 1; }
+            done
+            chmod 755 "$out/vxp"
+
+            if [ "$(uname)" = Darwin ]; then
+              # The SDK signs vxp ad hoc, and is trusted to have; the NuGet dylib may
+              # not be signed at all, and Apple silicon will not load an unsigned
+              # library either. Running vxp below proves it still starts.
+              codesign --verify "$out/vxp" 2>/dev/null || codesign --force --sign - "$out/vxp"
+              codesign --force --sign - "$out/$lib"
+              codesign --verify --verbose "$out/vxp" "$out/$lib"
+            fi
+
+            # Run whatever this machine can run: the native architecture, and x64 on
+            # a Mac with Rosetta. The rest is only checked for being there.
+            runnable=false
+            case "$rid" in
+              linux-x64) [ "$(uname -m)" = x86_64 ] && runnable=true ;;
+              osx-arm64) [ "$(uname -m)" = arm64 ] && runnable=true ;;
+              osx-x64)   arch -x86_64 /usr/bin/true 2>/dev/null && runnable=true ;;
+            esac
+            if [ "$runnable" = true ]; then
+              version="$("$out/vxp" version)"
+              [ -n "$version" ] || { echo "$rid: vxp version printed nothing" >&2; exit 1; }
+              echo "built $rid: $version"
+            else
+              echo "built $rid (not runnable on this runner)"
+            fi
+
+            # tar, not zip, so the executable bit survives the trip.
+            mkdir -p "staging/$name"
+            cp "$out/vxp" "$out/$lib" README.md LICENSE "staging/$name/"
+            chmod 644 "staging/$name/$lib" "staging/$name/README.md" "staging/$name/LICENSE"
+            tar -czf "dist/$name.tar.gz" -C staging "$name"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
 
       - name: Release
-        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          $tag = "${{ github.event.inputs.tag }}"
-          if (-not $tag) { $tag = "${{ github.ref_name }}" }
+          set -euo pipefail
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
           # `create` fails if the release already exists (a re-run, or a tag pushed
           # after a manual release); fall back to uploading into it.
-          gh release create $tag vxp-windows-x86_64.zip --title $tag --generate-notes
-          if ($LASTEXITCODE -ne 0) {
-            gh release upload $tag vxp-windows-x86_64.zip --clobber
-          }
+          if ! gh release create "$TAG" --title "$TAG" --generate-notes ./*; then
+            gh release upload "$TAG" --clobber ./*
+          fi

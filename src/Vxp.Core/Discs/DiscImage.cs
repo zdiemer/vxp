@@ -303,13 +303,53 @@ public sealed class DiscImage : IDisposable
             _entry = entry;
             _buffer = buffer;
 
-            var directory = Path.Combine(Path.GetTempPath(), "vxp");
-            Directory.CreateDirectory(directory);
+            Cache = CreateCache();
+        }
 
-            Cache = new FileStream(
-                Path.Combine(directory, Path.GetRandomFileName()),
-                FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
-                bufferSize: 0, FileOptions.DeleteOnClose);
+        /// <summary>
+        /// A read-write temporary file that is gone once the process is, however it ends.
+        /// </summary>
+        /// <remarks>
+        /// Windows deletes a delete-on-close file when its last handle closes, which a
+        /// killed process's handles also do. Elsewhere .NET emulates that by unlinking at
+        /// dispose, which a killed process never reaches, so the file is unlinked as soon
+        /// as it is open instead: the open descriptor keeps the data, and the kernel frees
+        /// it when the descriptor goes. That also means no shared directory is needed
+        /// under <c>/tmp</c>, where the first user to create it would lock out the rest.
+        /// </remarks>
+        private static FileStream CreateCache()
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                var directory = Path.Combine(Path.GetTempPath(), "vxp");
+                Directory.CreateDirectory(directory);
+
+                return new FileStream(
+                    Path.Combine(directory, Path.GetRandomFileName()),
+                    FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
+                    bufferSize: 0, FileOptions.DeleteOnClose);
+            }
+
+            var path = Path.Combine(Path.GetTempPath(), "vxp-" + Path.GetRandomFileName());
+            var stream = new FileStream(
+                path, new FileStreamOptions
+                {
+                    Mode = FileMode.CreateNew,
+                    Access = FileAccess.ReadWrite,
+                    Share = FileShare.None,
+                    BufferSize = 0,
+                    UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                });
+            try
+            {
+                File.Delete(path);
+            }
+            catch
+            {
+                stream.Dispose();
+                throw;
+            }
+            return stream;
         }
 
         /// <summary>The decompressed bytes so far.</summary>
@@ -389,6 +429,10 @@ public sealed class DiscImage : IDisposable
 
     private static string ResolveTrackFile(string directory, string fileName)
     {
+        // Cue sheets are written on Windows, so a FILE in a subfolder says so with a
+        // backslash, which is an ordinary file name character everywhere else.
+        fileName = fileName.Replace('\\', '/');
+
         var direct = Path.Combine(directory, fileName);
         if (File.Exists(direct)) return direct;
 
