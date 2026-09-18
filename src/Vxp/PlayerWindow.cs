@@ -1099,7 +1099,11 @@ public sealed unsafe class PlayerWindow : IDisposable
         _sdl.ClearQueuedAudio(_audioDevice);
         lock (_pendingGate) _pending.Clear();
         _displayFrame = CurrentFramebuffer();
-        _samplesQueued = 0;
+
+        // Frames are tagged with the player's running sample count, which a jump does not
+        // reset. Zeroing this instead would hold the picture back by everything played so
+        // far: frozen for that long after the jump, then trailing the sound by it.
+        _samplesQueued = _player?.SamplesRendered ?? 0;
     }
 
     private void SetFullscreen(bool on)
