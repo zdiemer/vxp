@@ -132,7 +132,7 @@ public static class SessionCommand
             _adjust.Apply(rgba);
             PngWriter.Write(
                 Path.Combine(_frameDirectory, $"t{player.CurrentTrack:D2}_f{player.CurrentFrame - 1:D5}.png"),
-                rgba, FrameLayout.Width, FrameLayout.Height, _args.Int("scale", 1));
+                rgba, player.Layout.PictureWidth, player.Layout.PictureHeight, _args.Int("scale", 1));
 
             _framesWritten++;
         }
@@ -302,7 +302,7 @@ public static class SessionCommand
         {
             if (operand is null) throw new ArgumentException("seek needs a duration, such as '5s' or '-2s'.");
 
-            var frames = CommandLine.ParseDurationInFrames(operand.TrimStart('+'), _player.Layout.PlaybackFrameRate);
+            var frames = CommandLine.ParseDurationInFrames(operand.TrimStart('+'), _player.TrackLayout.PlaybackFrameRate);
             _player.SeekToFrame(_player.CurrentFrame + frames);
         }
 
@@ -320,7 +320,7 @@ public static class SessionCommand
             var directory = Path.GetDirectoryName(Path.GetFullPath(path));
             if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
-            PngWriter.Write(path, rgba, FrameLayout.Width, FrameLayout.Height, _args.Int("scale", 1));
+            PngWriter.Write(path, rgba, _player.Layout.PictureWidth, _player.Layout.PictureHeight, _args.Int("scale", 1));
             if (!_json) Console.WriteLine($"Wrote {path}.");
         }
 

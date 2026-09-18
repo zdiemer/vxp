@@ -6,12 +6,18 @@ namespace Vxp.Format;
 public sealed class VideoNowFrame
 {
     internal VideoNowFrame(int trackNumber, int frameIndex, byte[] video, byte[] audio, FrameLayout layout)
+        : this(trackNumber, frameIndex, video, audio, layout, layout.HeaderBytes)
+    {
+    }
+
+    internal VideoNowFrame(int trackNumber, int frameIndex, byte[] video, byte[] audio, FrameLayout layout, int pictureOffset)
     {
         TrackNumber = trackNumber;
         FrameIndex = frameIndex;
         Video = video;
         Audio = audio;
         Layout = layout;
+        PictureOffset = pictureOffset;
     }
 
     /// <summary>Track this frame came from.</summary>
@@ -26,22 +32,34 @@ public sealed class VideoNowFrame
     /// <summary>De-interleaved video bytes: header followed by packed pixel data.</summary>
     public byte[] Video { get; }
 
-    /// <summary>De-interleaved audio bytes: unsigned 8-bit mono samples.</summary>
+    /// <summary>
+    /// De-interleaved audio bytes: unsigned 8-bit mono samples. Colour and XP frames always
+    /// carry <see cref="FrameLayout.AudioBytes"/>; a black and white frame carries the sound
+    /// up to the next frame, which at a track's edges includes that of any partial frame.
+    /// </summary>
     public byte[] Audio { get; }
 
+    /// <summary>Where the packed picture starts within <see cref="Video"/>.</summary>
+    public int PictureOffset { get; }
+
     /// <summary>Packed pixel data with the header removed.</summary>
-    public ReadOnlySpan<byte> PixelData => Video.AsSpan(Layout.HeaderBytes, FrameLayout.PixelBytes);
+    public ReadOnlySpan<byte> PixelData => Video.AsSpan(PictureOffset, Layout.PictureBytes);
 
     /// <summary>Parses this frame's display-controller header.</summary>
     public FrameHeader ReadHeader() => FrameHeader.Parse(Video, Layout);
 
-    /// <summary>Decodes this frame's picture to RGBA.</summary>
-    public byte[] DecodeRgba() => VideoDecoder.DecodeRgba(PixelData);
+    /// <summary>Decodes this frame's picture to RGBA, <see cref="FrameLayout.RgbaBytes"/> long.</summary>
+    public byte[] DecodeRgba()
+    {
+        var rgba = new byte[Layout.RgbaBytes];
+        VideoDecoder.Decode(this, rgba);
+        return rgba;
+    }
 }
 
 /// <summary>
 /// Reads frames sequentially from one track of a mounted disc, de-interleaving the
-/// nine-video-bytes-to-one-audio-byte stream as it goes.
+/// stream as it goes.
 /// </summary>
 public sealed class TrackReader
 {
@@ -49,12 +67,30 @@ public sealed class TrackReader
     private readonly byte[] _stream;
     private readonly byte[] _video;
     private readonly byte[] _audio;
+    private readonly BlackAndWhiteStream.FrameIndex? _index;
 
     /// <summary>Opens <paramref name="track"/> for reading using <paramref name="layout"/>.</summary>
+    /// <remarks>
+    /// A black and white track is scanned end to end to find its frames, since they do not
+    /// sit on a fixed grid (see <see cref="BlackAndWhiteStream.IndexFrames"/>).
+    /// </remarks>
     public TrackReader(DiscTrack track, FrameLayout layout)
     {
         _track = track;
         Layout = layout;
+
+        if (layout.Monochrome)
+        {
+            _index = BlackAndWhiteStream.IndexFrames(track);
+            FrameCount = _index.Count;
+            StartOffset = FrameCount > 0 ? _index.Starts[0] : 0;
+
+            _stream = [];
+            _video = [];
+            _audio = [];
+            return;
+        }
+
         StartOffset = FindFirstFrameOffset(track, layout);
         FrameCount = (int)Math.Max(0, (track.ByteLength - StartOffset) / layout.StreamBytes);
 
@@ -88,7 +124,8 @@ public sealed class TrackReader
     /// title's own register 0x4F steps straight over them to track 5. A segment that
     /// offers a choice or redirects matters even with nothing to show, so only
     /// <see cref="SegmentKind.Linear"/> counts. The scan stops at the first frame with
-    /// anything in it, so on a track with content it costs a frame or two.
+    /// anything in it, so on a track with content it costs a frame or two. Black and white
+    /// frames have no header, so no black and white track counts.
     /// </remarks>
     public bool IsBlank()
     {
@@ -115,6 +152,7 @@ public sealed class TrackReader
     public VideoNowFrame? ReadFrame(int frameIndex)
     {
         if (frameIndex < 0 || frameIndex >= FrameCount) return null;
+        if (Layout.Monochrome) return ReadBlackAndWhiteFrame(frameIndex);
 
         var offset = StartOffset + (long)frameIndex * Layout.StreamBytes;
         var read = _track.Read(offset, _stream);
@@ -137,6 +175,7 @@ public sealed class TrackReader
     public FrameHeader? ReadHeader(int frameIndex)
     {
         if (frameIndex < 0 || frameIndex >= FrameCount) return null;
+        if (Layout.Monochrome) return FrameHeader.Parse([], Layout);
 
         var groups = (Layout.HeaderBytes + FrameLayout.VideoBytesPerGroup - 1) / FrameLayout.VideoBytesPerGroup;
         var stream = _stream.AsSpan(0, groups * FrameLayout.GroupBytes);
@@ -148,7 +187,7 @@ public sealed class TrackReader
         return FrameHeader.Parse(_video, Layout);
     }
 
-    /// <summary>Splits an interleaved frame into its video and audio halves.</summary>
+    /// <summary>Splits an interleaved Color or XP frame into its video and audio halves.</summary>
     public static void Deinterleave(ReadOnlySpan<byte> stream, Span<byte> video, Span<byte> audio)
     {
         var groups = stream.Length / FrameLayout.GroupBytes;
@@ -159,6 +198,39 @@ public sealed class TrackReader
                   .CopyTo(video[(g * FrameLayout.VideoBytesPerGroup)..]);
             audio[g] = stream[source + FrameLayout.VideoBytesPerGroup];
         }
+    }
+
+    /// <summary>
+    /// Reads a black and white frame from the index. Its sound runs to the start of the
+    /// next frame, and the first and last frames of the track also take the sound beyond
+    /// them, of padding or of a frame cut at the track boundary, so a programme cut across
+    /// tracks loses none.
+    /// </summary>
+    private VideoNowFrame? ReadBlackAndWhiteFrame(int frameIndex)
+    {
+        const int group = BlackAndWhiteStream.GroupBytes;
+        var index = _index!;
+
+        var start = index.Starts[frameIndex];
+        var picture = start + index.PictureOffsets[frameIndex];
+        var pictureEnd = picture + BlackAndWhiteStream.PictureGroups * group;
+
+        var from = frameIndex == 0 ? index.Alignment : start;
+        var to = frameIndex + 1 < index.Count
+            ? index.Starts[frameIndex + 1]
+            : index.Alignment + (_track.ByteLength - index.Alignment) / group * group;
+
+        var bytes = new byte[(int)(to - from)];
+        if (_track.Read(from, bytes) < bytes.Length) return null;
+
+        var audio = new byte[bytes.Length / group];
+        BlackAndWhiteStream.Deinterleave(bytes, [], audio);
+
+        var video = new byte[(pictureEnd - start) / group * BlackAndWhiteStream.VideoBytesPerGroup];
+        BlackAndWhiteStream.Deinterleave(bytes.AsSpan((int)(start - from), (int)(pictureEnd - start)), video, []);
+
+        var pictureOffset = (int)(picture - start) / group * BlackAndWhiteStream.VideoBytesPerGroup;
+        return new VideoNowFrame(_track.Number, frameIndex, video, audio, Layout, pictureOffset);
     }
 
     /// <summary>

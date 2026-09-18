@@ -17,6 +17,10 @@ namespace Vxp.Tests;
 /// <paramref name="Branches"/> when given.
 /// </param>
 /// <param name="Thresholds">Score thresholds per slot for a tagged segment; 0x6D when omitted.</param>
+/// <param name="Layout">
+/// The variant the track is mastered in: XP when omitted, or Color, or black and white,
+/// whose frames carry no header and so ignore the header fields above.
+/// </param>
 /// <param name="Prompts">
 /// Timed prompts: runs of frames, first to last inclusive, whose branch table replaces the
 /// segment's own.
@@ -32,7 +36,8 @@ public sealed record TrackSpec(
     bool Blank = false,
     int[][]? PlayLists = null,
     byte[]? Thresholds = null,
-    (int First, int Last, int[] Branches)[]? Prompts = null);
+    (int First, int Last, int[] Branches)[]? Prompts = null,
+    FrameLayout? Layout = null);
 
 /// <summary>
 /// Writes a playable VideoNow XP disc image to a temporary directory, so the player can
@@ -52,6 +57,31 @@ public sealed class SyntheticDiscFile : IDisposable
     /// <summary>Path of the cue sheet.</summary>
     public string CuePath { get; }
 
+    /// <summary>
+    /// Builds a disc whose tracks hold exactly the given bytes, for streams the track
+    /// specifications cannot describe, such as frames cut across a track boundary.
+    /// </summary>
+    public static SyntheticDiscFile FromBytes(params byte[][] tracks)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "vxp-tests", Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(directory);
+
+        var cue = new StringBuilder();
+        for (var i = 0; i < tracks.Length; i++)
+        {
+            var fileName = $"disc (Track {i + 1:D2}).bin";
+            File.WriteAllBytes(Path.Combine(directory, fileName), tracks[i]);
+
+            cue.AppendLine($"FILE \"{fileName}\" BINARY");
+            cue.AppendLine($"  TRACK {i + 1:D2} AUDIO");
+            cue.AppendLine("    INDEX 01 00:00:00");
+        }
+
+        var cuePath = Path.Combine(directory, "disc.cue");
+        File.WriteAllText(cuePath, cue.ToString());
+        return new SyntheticDiscFile(directory, cuePath);
+    }
+
     /// <summary>Builds a disc from the given track specifications.</summary>
     public static SyntheticDiscFile Create(params TrackSpec[] tracks)
     {
@@ -59,10 +89,10 @@ public sealed class SyntheticDiscFile : IDisposable
         System.IO.Directory.CreateDirectory(directory);
 
         var cue = new StringBuilder();
-        var layout = FrameLayout.Xp;
 
         foreach (var spec in tracks)
         {
+            var layout = spec.Layout ?? FrameLayout.Xp;
             var fileName = $"disc (Track {spec.Number:D2}).bin";
             var path = Path.Combine(directory, fileName);
 
@@ -75,7 +105,11 @@ public sealed class SyntheticDiscFile : IDisposable
             {
                 using var file = File.Create(path);
                 for (var frame = 0; frame < spec.Frames; frame++)
-                    file.Write(BuildFrame(spec, frame, layout));
+                {
+                    file.Write(layout.Monochrome
+                        ? SyntheticBlackAndWhite.StampedFrame(spec.Number, frame)
+                        : BuildFrame(spec, frame, layout));
+                }
             }
 
             cue.AppendLine($"FILE \"{fileName}\" BINARY");

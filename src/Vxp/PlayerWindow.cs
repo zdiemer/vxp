@@ -58,7 +58,9 @@ public sealed unsafe class PlayerWindow : IDisposable
     private static readonly int DeviceSampleRate = FrameLayout.Xp.PlaybackSampleRate;
 
     private readonly short[] _mixBuffer = new short[2048];
-    private readonly byte[] _displayRgba = new byte[VideoDecoder.RgbaFrameBytes];
+    private byte[] _displayRgba = new byte[VideoDecoder.RgbaFrameBytes];
+    private int _pictureWidth = FrameLayout.Width;
+    private int _pictureHeight = FrameLayout.Height;
     private readonly HashSet<int> _heldAxes = new();
 
     private Texture* _videoTexture;
@@ -647,9 +649,16 @@ public sealed unsafe class PlayerWindow : IDisposable
 
         if (_videoTexture is not null) _sdl.DestroyTexture(_videoTexture);
 
+        // The texture is the stored picture: 144 x 80, or 80 x 80 for black and white. Either
+        // is drawn into the same 4:3 frame (see ComputeDestination).
+        _pictureWidth = _player?.Layout.PictureWidth ?? FrameLayout.Width;
+        _pictureHeight = _player?.Layout.PictureHeight ?? FrameLayout.Height;
+        if (_displayRgba.Length != _pictureWidth * _pictureHeight * 4)
+            _displayRgba = new byte[_pictureWidth * _pictureHeight * 4];
+
         _videoTexture = _sdl.CreateTexture(
             _renderer, (uint)PixelFormatEnum.Abgr8888, (int)TextureAccess.Streaming,
-            FrameLayout.Width, FrameLayout.Height);
+            _pictureWidth, _pictureHeight);
     }
 
     private void OnFrameDecoded(VideoNowPlayer player)
@@ -1046,8 +1055,8 @@ public sealed unsafe class PlayerWindow : IDisposable
     /// </summary>
     /// <remarks>
     /// The setting is the rate for an XP disc. Another variant keeps its own playback rate
-    /// scaled by the same trim, so a Color disc plays at one-times speed until the setting
-    /// is moved.
+    /// scaled by the same trim: Color shares XP's 35 280 Hz, and black and white plays at
+    /// its one-times 44 100 Hz until the setting is moved.
     /// </remarks>
     private double PlaybackRate(int percent)
     {
@@ -1202,7 +1211,7 @@ public sealed unsafe class PlayerWindow : IDisposable
             foreach (var bad in Path.GetInvalidFileNameChars()) name = name.Replace(bad, '_');
 
             var path = Path.Combine(directory, name);
-            PngWriter.Write(path, _displayRgba, FrameLayout.Width, FrameLayout.Height);
+            PngWriter.Write(path, _displayRgba, _pictureWidth, _pictureHeight);
             _menu.Toast($"Saved {Path.GetFileName(path)}", 3);
         }
         catch (IOException ex)
@@ -1216,11 +1225,11 @@ public sealed unsafe class PlayerWindow : IDisposable
         int windowWidth, windowHeight;
         _sdl.GetRendererOutputSize(_renderer, &windowWidth, &windowHeight);
 
-        _displayFrame.CopyTo(_displayRgba, 0);
+        if (_displayFrame.Length == _displayRgba.Length) _displayFrame.CopyTo(_displayRgba, 0);
         _adjust.Apply(_displayRgba);
 
         fixed (byte* pixels = _displayRgba)
-            _sdl.UpdateTexture(_videoTexture, (Rectangle<int>*)null, pixels, FrameLayout.Width * 4);
+            _sdl.UpdateTexture(_videoTexture, (Rectangle<int>*)null, pixels, _pictureWidth * 4);
 
         var background = Rgba.Parse(_settings.Video.BackgroundColor);
         _sdl.SetRenderDrawColor(_renderer, background.R, background.G, background.B, 255);
@@ -1283,7 +1292,7 @@ public sealed unsafe class PlayerWindow : IDisposable
 
         var width = destination.Size.X;
         var height = destination.Size.Y;
-        if (width < FrameLayout.Width || height < FrameLayout.Height) return;
+        if (width < _pictureWidth || height < _pictureHeight) return;
 
         if (_effectTexture is null || _effectWidth != width || _effectHeight != height)
         {
@@ -1300,8 +1309,8 @@ public sealed unsafe class PlayerWindow : IDisposable
         if (_effectTexture is not null) _sdl.DestroyTexture(_effectTexture);
 
         var pixels = new byte[width * height * 4];
-        var cellWidth = width / (double)FrameLayout.Width;
-        var cellHeight = height / (double)FrameLayout.Height;
+        var cellWidth = width / (double)_pictureWidth;
+        var cellHeight = height / (double)_pictureHeight;
 
         for (var y = 0; y < height; y++)
         {

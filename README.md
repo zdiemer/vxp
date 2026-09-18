@@ -32,9 +32,11 @@ vxp "Some Title.cue"
 
 ## What it does
 
-- **VideoNow XP and VideoNow Color** discs, detected automatically.
-- **Picture**: 144 x 80, three 4-bit channels per pixel, decoded natively and shown at
-  the shape the panel showed it rather than the shape it is stored in.
+- **VideoNow XP and VideoNow Color** discs, and the original **black and white** ones,
+  detected automatically.
+- **Picture**: 144 x 80, three 4-bit channels per pixel (80 x 80 in 16 greys on black and
+  white), decoded natively and shown at the shape the panel showed it rather than the
+  shape it is stored in.
 - **Sound**: 8-bit mono, in sync, played at twice CD speed, 35 280 Hz, by default (`--rate` to change).
 - **Transport**: play, pause, seek, frame step, variable speed, fast forward, loop.
 - **Interactive titles**: the branch table is read out of each segment's header, so
@@ -78,12 +80,15 @@ A VideoNow disc is a small CD pressed as an **ordinary audio CD**, with no files
 no video codec. The player reads raw CD audio sectors and sends them almost straight to
 the screen and the speaker.
 
-- The stream interleaves **nine picture bytes to one sound byte**.
+- On XP and Color the stream interleaves **nine picture bytes to one sound byte**.
 - XP frames are 19 760 bytes and Color frames 19 600, both holding a **144 x 80** picture
   at 4 bits per colour channel. Counting the sync-word repeats in a frame header tells the
   two apart.
 - The XP reads at **twice CD speed**, so it plays **17.85 frames a second** with
-  **35 280 Hz** 8-bit mono sound.
+  **35 280 Hz** 8-bit mono sound. Color frames play at the same speed.
+- Black and white discs are laid out differently: two picture bytes, a marker byte and a
+  sound byte at a time, an **80 x 80** picture in 16 greys, read at ordinary CD speed for
+  **15 frames a second** and **44 100 Hz** sound.
 - The pixels are not square. `vxp` draws the picture at 4:3, the shape the cartoons were
   made at.
 - Interactive titles are ordinary tracks. Each segment's header lists where it goes next
@@ -474,9 +479,10 @@ what is still guesswork.
 ## Status
 
 Every tested disc plays through as built, including the interactive stories and the
-scored quizzes. What is still open is listed in `docs/format.md`: whether Color discs also
-play at twice CD speed, and what a few rarely set header registers do. Black and white
-VideoNow discs are detected but not yet decoded.
+scored quizzes. Black and white VideoNow discs play too. What is still open is listed in
+`docs/format.md`: a disc whose programme is in the Color format, to confirm that Color
+plays at twice CD speed like the Color clips on XP discs, and what a few rarely set
+header registers do.
 
 ## Credits
 

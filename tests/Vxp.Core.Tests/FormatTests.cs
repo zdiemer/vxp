@@ -50,11 +50,29 @@ public class FrameLayoutTests
     }
 
     [Fact]
-    public void ColorStaysAtOneTimesUntilADiscSaysOtherwise()
+    public void ColorPlaysAtTwiceCdSpeedLikeXp()
     {
-        Assert.Equal(1, FrameLayout.Color.DiscSpeed);
-        Assert.Equal(17640, FrameLayout.Color.PlaybackSampleRate);
-        Assert.Equal(9.0, FrameLayout.Color.PlaybackFrameRate, 6);
+        // A Color-format logo of 106 frames stands in for the XP logo of 106 frames, and
+        // Color-format clips share discs with XP content, so the two read at one speed.
+        Assert.Equal(2, FrameLayout.Color.DiscSpeed);
+        Assert.Equal(FrameLayout.Xp.PlaybackSampleRate, FrameLayout.Color.PlaybackSampleRate);
+        Assert.Equal(18.0, FrameLayout.Color.PlaybackFrameRate, 6);
+    }
+
+    [Fact]
+    public void BlackAndWhitePlaysAtOneTimesCdSpeed()
+    {
+        var layout = FrameLayout.BlackAndWhite;
+
+        Assert.Equal(1, layout.DiscSpeed);
+        Assert.Equal(11760, layout.StreamBytes);
+        Assert.Equal(5880, layout.VideoBytes);
+        Assert.Equal(2940, layout.AudioBytes);
+        Assert.Equal(44100, layout.StreamSampleRate);
+        Assert.Equal(44100, layout.PlaybackSampleRate);
+        Assert.Equal(15.0, layout.PlaybackFrameRate, 6);
+        Assert.Equal(3200, layout.PictureBytes);
+        Assert.Equal(80 * 80 * 4, layout.RgbaBytes);
     }
 
     [Fact]
@@ -62,7 +80,8 @@ public class FrameLayoutTests
     {
         // 1976 samples at 35 280 Hz: 56.009 ms, not the 112.018 ms of one-times speed.
         Assert.Equal(1976 / 35280.0, FrameLayout.Xp.FrameDuration.TotalSeconds, 6);
-        Assert.Equal(1960 / 17640.0, FrameLayout.Color.FrameDuration.TotalSeconds, 6);
+        Assert.Equal(1960 / 35280.0, FrameLayout.Color.FrameDuration.TotalSeconds, 6);
+        Assert.Equal(1 / 15.0, FrameLayout.BlackAndWhite.FrameDuration.TotalSeconds, 6);
     }
 
     [Fact]

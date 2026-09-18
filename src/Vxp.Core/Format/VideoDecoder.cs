@@ -24,8 +24,19 @@ namespace Vxp.Format;
 /// </remarks>
 public static class VideoDecoder
 {
-    /// <summary>Bytes in a decoded RGBA frame.</summary>
+    /// <summary>Bytes in a decoded Color or XP RGBA frame; see <see cref="FrameLayout.RgbaBytes"/>.</summary>
     public const int RgbaFrameBytes = FrameLayout.Width * FrameLayout.Height * 4;
+
+    /// <summary>
+    /// Decodes <paramref name="frame"/>'s picture into <paramref name="rgba"/>, which must hold
+    /// <see cref="FrameLayout.RgbaBytes"/> of the frame's layout: colour for Color and XP,
+    /// grey for black and white, where <paramref name="order"/> has nothing to act on.
+    /// </summary>
+    public static void Decode(VideoNowFrame frame, Span<byte> rgba, ChannelOrder? order = null)
+    {
+        if (frame.Layout.Monochrome) BlackAndWhiteStream.DecodeRgba(frame.PixelData, rgba);
+        else DecodeRgba(frame.PixelData, rgba, order ?? ChannelOrder.Default);
+    }
 
     /// <summary>
     /// Decodes <paramref name="pixelData"/> (<see cref="FrameLayout.PixelBytes"/> bytes,

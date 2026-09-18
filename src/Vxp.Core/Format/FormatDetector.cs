@@ -5,7 +5,9 @@ namespace Vxp.Format;
 /// <summary>Identifies which VideoNow variant a disc or track was mastered in.</summary>
 /// <remarks>
 /// Color and XP share the same sync word, so they are told apart by how many times it
-/// repeats at the head of a frame: 24 for Color, 12 for XP.
+/// repeats at the head of a frame: 24 for Color, 12 for XP. Black and white has no sync
+/// word, and is recognised by the marker bytes of its four-byte groups: a run of header
+/// markers followed by 1600 groups marked as picture (see <see cref="BlackAndWhiteStream"/>).
 /// </remarks>
 public static class FormatDetector
 {
@@ -28,7 +30,8 @@ public static class FormatDetector
     {
         var sync = FrameLayout.SyncWord;
         var start = stream.IndexOf(sync);
-        if (start < 0) return null;
+        if (start < 0)
+            return BlackAndWhiteStream.LooksLike(stream) ? FrameLayout.BlackAndWhite : null;
 
         // Count how many consecutive interleave groups begin with the sync word.
         var repeats = 0;

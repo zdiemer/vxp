@@ -30,7 +30,7 @@ public static class MediaCommands
 
         using var wav = noAudio ? null : new WavWriter(Path.Combine(outDir, "audio.wav"), PlaybackSampleRate(disc));
         var pcm = new short[65536];
-        var rgba = new byte[VideoDecoder.RgbaFrameBytes];
+        byte[] rgba = [];
         var exported = 0;
 
         foreach (var track in tracks)
@@ -46,15 +46,17 @@ public static class MediaCommands
 
                 if (!noVideo && (i - startFrame) % everyNth == 0)
                 {
-                    VideoDecoder.DecodeRgba(frame.PixelData, rgba, adjust.Order);
+                    if (rgba.Length != layout.RgbaBytes) rgba = new byte[layout.RgbaBytes];
+                    VideoDecoder.Decode(frame, rgba, adjust.Order);
                     adjust.Apply(rgba);
                     PngWriter.Write(
                         Path.Combine(outDir, $"t{track.Number:D2}_f{i:D5}.png"),
-                        rgba, FrameLayout.Width, FrameLayout.Height, scale);
+                        rgba, layout.PictureWidth, layout.PictureHeight, scale);
                 }
 
                 if (wav is not null)
                 {
+                    if (pcm.Length < frame.Audio.Length) pcm = new short[frame.Audio.Length];
                     AudioDecoder.DecodePcm16(frame.Audio, pcm);
                     wav.Write(pcm.AsSpan(0, frame.Audio.Length));
                 }
@@ -88,14 +90,14 @@ public static class MediaCommands
         var frame = reader.ReadFrame(frameIndex)
                     ?? throw new ArgumentException($"Track {trackNumber} has no frame {frameIndex}.");
 
-        var rgba = new byte[VideoDecoder.RgbaFrameBytes];
-        VideoDecoder.DecodeRgba(frame.PixelData, rgba, adjust.Order);
+        var rgba = new byte[layout.RgbaBytes];
+        VideoDecoder.Decode(frame, rgba, adjust.Order);
         adjust.Apply(rgba);
 
         var directory = Path.GetDirectoryName(Path.GetFullPath(output));
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
-        PngWriter.Write(output, rgba, FrameLayout.Width, FrameLayout.Height, scale);
+        PngWriter.Write(output, rgba, layout.PictureWidth, layout.PictureHeight, scale);
         Console.WriteLine($"Wrote {output} (track {trackNumber}, frame {frameIndex}).");
         return 0;
     }
@@ -131,6 +133,7 @@ public static class MediaCommands
                 var frame = reader.ReadFrame(i);
                 if (frame is null) break;
 
+                if (pcm.Length < frame.Audio.Length) pcm = new short[frame.Audio.Length];
                 AudioDecoder.DecodePcm16(frame.Audio, pcm);
                 wav.Write(pcm.AsSpan(0, frame.Audio.Length));
                 samples += frame.Audio.Length;
@@ -146,6 +149,9 @@ public static class MediaCommands
     /// The rate a disc's soundtrack is written at: the rate it plays at, so the file runs
     /// at the right speed, rather than the stream's one-times byte rate.
     /// </summary>
+    /// <remarks>
+    /// One rate serves a disc that mixes Color and XP tracks, since both play at 35 280 Hz.
+    /// </remarks>
     internal static int PlaybackSampleRate(DiscImage disc)
         => (FormatDetector.Detect(disc) ?? FrameLayout.Xp).PlaybackSampleRate;
 }

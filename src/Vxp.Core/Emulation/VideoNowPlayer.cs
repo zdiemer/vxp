@@ -111,20 +111,35 @@ public sealed class VideoNowPlayer : IDisposable
                  ?? FormatDetector.Detect(disc)
                  ?? throw new InvalidDataException("No VideoNow video stream was found on this disc.");
 
-        Framebuffer = new byte[VideoDecoder.RgbaFrameBytes];
+        Framebuffer = new byte[Layout.RgbaBytes];
         SelectTrack(FirstPlayableTrack());
     }
 
     /// <summary>Opens a player over the disc described by a cue sheet.</summary>
     public static VideoNowPlayer Open(string cuePath) => new(DiscImage.Open(cuePath));
 
-    /// <summary>Frame layout in use.</summary>
+    /// <summary>
+    /// The disc's layout, which fixes the picture size of <see cref="Framebuffer"/> and the
+    /// rate <see cref="RenderAudio"/> produces sound at.
+    /// </summary>
+    /// <remarks>
+    /// A disc can mix variants: XP discs carry Color-format tracks, such as the logo or
+    /// the end-of-disc clip. Each track is read, timed and played with its own layout,
+    /// <see cref="TrackLayout"/>, and its sound is resampled to this layout's rate if the
+    /// two differ.
+    /// </remarks>
     public FrameLayout Layout { get; }
+
+    /// <summary>Layout of the track being played, which can differ from the disc's.</summary>
+    public FrameLayout TrackLayout => _reader?.Layout ?? Layout;
 
     /// <summary>The mounted disc.</summary>
     public DiscImage Disc => _disc;
 
-    /// <summary>Decoded picture of the current frame, as 144x80 RGBA.</summary>
+    /// <summary>
+    /// Decoded picture of the current frame, as RGBA at the picture size of
+    /// <see cref="Layout"/>: 144 x 80 for Color and XP, 80 x 80 for black and white.
+    /// </summary>
     public byte[] Framebuffer { get; }
 
     /// <summary>Current transport state.</summary>
@@ -207,10 +222,10 @@ public sealed class VideoNowPlayer : IDisposable
     public long SamplesRendered { get; private set; }
 
     /// <summary>Position within the current track.</summary>
-    public TimeSpan Position => Layout.FrameDuration * CurrentFrame;
+    public TimeSpan Position => TrackLayout.FrameDuration * CurrentFrame;
 
     /// <summary>Duration of the current track.</summary>
-    public TimeSpan TrackDuration => Layout.FrameDuration * TrackFrameCount;
+    public TimeSpan TrackDuration => TrackLayout.FrameDuration * TrackFrameCount;
 
     /// <summary>Raised on the audio thread whenever a new frame has been decoded into <see cref="Framebuffer"/>.</summary>
     public event Action<VideoNowPlayer>? FrameDecoded;
@@ -290,7 +305,7 @@ public sealed class VideoNowPlayer : IDisposable
     {
         lock (_gate)
         {
-            if (CurrentFrame > Layout.PlaybackFrameRate)
+            if (CurrentFrame > TrackLayout.PlaybackFrameRate)
             {
                 SelectTrackCore(CurrentTrack);
                 return;
@@ -342,7 +357,7 @@ public sealed class VideoNowPlayer : IDisposable
     {
         lock (_gate)
         {
-            var frames = (int)Math.Round(seconds * Layout.PlaybackFrameRate);
+            var frames = (int)Math.Round(seconds * TrackLayout.PlaybackFrameRate);
             SeekToFrameCore(CurrentFrame + frames);
         }
     }
@@ -441,7 +456,10 @@ public sealed class VideoNowPlayer : IDisposable
                 }
 
                 destination[i] = SampleAt(_audioPosition);
-                _audioPosition += _speed;
+
+                // A track whose variant plays at another rate than the disc's is resampled
+                // to it, so its picture and sound keep their own speed.
+                _audioPosition += _speed * TrackLayout.PlaybackSampleRate / Layout.PlaybackSampleRate;
                 SamplesRendered++;
             }
 
@@ -513,7 +531,10 @@ public sealed class VideoNowPlayer : IDisposable
         CurrentHeader = frame.ReadHeader();
         Branches = CurrentHeader.Branches;
 
-        VideoDecoder.DecodeRgba(frame.PixelData, Framebuffer);
+        // A track stored at another picture size than the disc's has nowhere to go in the
+        // framebuffer, and shows black. No disc mixes black and white with colour.
+        if (frame.Layout.RgbaBytes == Framebuffer.Length) VideoDecoder.Decode(frame, Framebuffer);
+        else Array.Clear(Framebuffer);
 
         FrameDecoded?.Invoke(this);
         if (!hadChoice && IsChoicePoint) ChoicePresented?.Invoke(this);

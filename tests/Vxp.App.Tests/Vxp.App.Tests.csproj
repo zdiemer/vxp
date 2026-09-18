@@ -17,5 +17,6 @@
          so the session driver can be run end to end without a retail disc. -->
     <Compile Include="..\Vxp.Core.Tests\SyntheticDisc.cs" Link="SyntheticDisc.cs" />
     <Compile Include="..\Vxp.Core.Tests\SyntheticDiscFile.cs" Link="SyntheticDiscFile.cs" />
+    <Compile Include="..\Vxp.Core.Tests\SyntheticBlackAndWhite.cs" Link="SyntheticBlackAndWhite.cs" />
   </ItemGroup>
 </Project>

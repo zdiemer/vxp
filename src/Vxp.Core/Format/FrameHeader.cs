@@ -134,8 +134,14 @@ public sealed class FrameHeader
     /// <summary>
     /// Parses the header from the de-interleaved video bytes of a frame.
     /// </summary>
+    /// <remarks>
+    /// A black and white frame has no register file, so its header reads as all zeros:
+    /// no segment kind, no branches and no track to continue with.
+    /// </remarks>
     public static FrameHeader Parse(ReadOnlySpan<byte> videoBytes, FrameLayout layout)
     {
+        if (layout.Monochrome) return new FrameHeader(new byte[256]);
+
         if (videoBytes.Length < layout.HeaderBytes)
             throw new ArgumentException("Frame is shorter than its header.", nameof(videoBytes));
 

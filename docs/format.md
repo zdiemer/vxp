@@ -1,6 +1,7 @@
 # The VideoNow disc format
 
-This is what `vxp` implements, derived by analysing retail VideoNow XP discs and
+This is what `vxp` implements, derived by analysing retail VideoNow XP discs, two
+original black and white discs and two discs that mix Color and XP tracks, and
 cross-checked against [PVDTools](https://github.com/saramibreak/PVDTools), the earlier
 C decoder by saramibreak, and the format notes it grew out of.
 
@@ -51,6 +52,9 @@ So of the 176 400 bytes/s, nine tenths are video and one tenth is audio: exactly
 **17 640 audio bytes a second** at one-times CD speed. The XP reads at twice that, so its
 sound plays at 35 280 Hz (see [Audio](#audio-established)).
 
+That is Color and XP. The original black and white discs use four-byte groups instead;
+see [Black and white](#black-and-white-established).
+
 ## Frames (established)
 
 The stream is divided into fixed-size frames. The frame size is the one place where the
@@ -58,11 +62,12 @@ disc variants differ:
 
 | Variant | Frame on disc | Video | Audio | Header | Sync words | At 1x CD | Played at |
 |---------|--------------:|------:|------:|-------:|-----------:|---------:|----------:|
-| Color   | 19 600 B      | 17 640 B | 1 960 B | 360 B | 24 | 9.0000 fps | 9.0000 fps (1x, unchecked) |
+| Color   | 19 600 B      | 17 640 B | 1 960 B | 360 B | 24 | 9.0000 fps | 18.0000 fps (2x) |
 | XP      | 19 760 B      | 17 784 B | 1 976 B | 504 B | 12 | 8.9271 fps | 17.8543 fps (2x) |
+| Black and white | 11 760 B | 5 880 B | 2 940 B | 1 340 B | none | 15.0000 fps | 15.0000 fps (1x) |
 
-Both carry the same **144 x 80** picture; XP's improvement was a larger, better screen
-and longer running time, not more pixels. In both cases:
+Color and XP carry the same **144 x 80** picture; XP's improvement was a larger, better
+screen and longer running time, not more pixels. In both cases:
 
 ```
 video bytes = header + 17 280 bytes of packed pixel data
@@ -89,7 +94,7 @@ boundary, but `vxp` searches for the sync word rather than assuming it.
 ## Audio (established)
 
 Unsigned 8-bit mono PCM, 17 640 bytes to a second of disc at one-times CD speed, played
-at 35 280 Hz on the XP. Silence is `0x80`. There is no compression and no in-band control
+at 35 280 Hz on XP and Color. Silence is `0x80`. There is no compression and no in-band control
 data.
 
 > **The XP plays at twice CD speed.** 17 640 Hz is the rate at one-times CD speed, and
@@ -111,16 +116,37 @@ data.
 > (`FrameLayout.PlaybackSampleRate`, the stream rate times the variant's disc speed) is
 > what every time is shown and written in. Running times in `vxp info`, `tracks` and the menus, the
 > position in the overlay, `vxp run` durations and `--max-seconds`, and every WAV that
-> `audio`, `export` and `run --wav` write are at 35 280 Hz for XP, so a WAV plays at the
+> `audio`, `export` and `run --wav` write are at 35 280 Hz for XP and Color (44 100 Hz for black and white), so a WAV plays at the
 > right speed. Live playback answers to the `emulation.discSampleRate` setting (`--rate`),
 > whose default is that same 35 280, so it can be trimmed until hardware confirms it.
 >
-> **Color is unchecked.** No all-Color disc has been examined, so nothing says whether
-> the Color player reads at 1x or 2x. XP discs can mix the variants: the Aly & AJ disc's
-> end-of-disc clip (track 5, `eod.vn5`) is a Color-format track on an otherwise XP disc,
-> which suggests the XP player plays Color frames too, most likely at its own 2x. `vxp` keeps Color at one-times, 17 640 Hz and
-> 9 fps, and scales the live rate setting by the same proportion, until a Color disc
-> shows otherwise.
+> **Color frames play at 2x too.** `vxp` reads the Color format at twice CD speed,
+> **35 280 Hz** and **18.000 fps**, on the strength of two discs that put Color-format
+> tracks beside 2x content:
+>
+> - *Aly & AJ: No One* comes from a VideoNow Color archive. Its content is XP-format
+>   frames and plays at 2x (the song's running time, above). Its end-of-disc clip
+>   (track 5, `eod.vn5`) is Color-format, and its fill track is named `vnc_dummy_30min`,
+>   which reads as a VideoNow Color mastering name.
+> - *Thomas & Friends: Thomas' Rescue Adventures*, a VideoNow Jr disc, opens with a
+>   Color-format "VideoNow COLOR" logo of 106 frames. The XP discs' XP-format logo is also
+>   106 frames long, so the two last the same time only if both play at the same speed.
+>   The Color logo is followed by XP-format episodes whose narration sounds right at
+>   35 280 Hz: the envelope of track 3's sound swells and fades about 4.1 times a
+>   second, the pace of syllables in ordinary speech, where 1x would make it about 2.
+>   It ends with two more Color-format tracks (12 and 13).
+>
+> So a player of the Color era decodes XP-size frames and reads at 2x, and Color-format
+> tracks share discs with 2x content. Every Color track examined is short (logos, an
+> end-of-disc clip, closing cards); what remains unchecked is a disc whose programme
+> itself is Color-format, and a real Color player.
+>
+> **Mixed discs.** A disc takes its variant from the majority of its tracks, but each
+> track is read and timed with its own layout. A Color track on an XP disc, such as Aly &
+> AJ track 5 (102 frames, 5.67 s), shows the same running time in `vxp info`, the track
+> browser and a `vxp run` status, and plays at its own 18 fps. Were a track's rate ever
+> to differ from the disc's, the player would resample it to the disc's rate; with Color
+> and XP both at 35 280 Hz, none does.
 
 Note that PVDTools writes its WAV header as two channels; that appears to be a slip, and
 its own header fields are internally inconsistent about it. Sample-to-sample correlation
@@ -190,10 +216,13 @@ stripes.
 **240 x 160** appears on Wikipedia for both Color and XP, uncited. The claims around it
 do not survive contact with a real disc: it says the video is compressed (there is no
 codec at all), that it runs at 15 fps (it is `176 400 / 19 760` = 8.93 at one-times CD
-speed and 17.85 at the twice CD speed the XP reads at, and 9.00 on Color), and that video sits on the left audio channel with sound on the right (it is a
-9:1 byte interleave, not a stereo split). Its black and white figure — 80 x 80 non-square
-with 16 greys — does match, so the page is not uniformly wrong, but nothing on it should
-be preferred to the disc.
+speed and 17.85 at the twice CD speed the XP reads at, and 18.00 on Color at the same
+speed), and that video sits on the left audio channel with sound on the right (it is a
+9:1 byte interleave, not a stereo split). Those last two are true of the original black
+and white format, which does run at 15 fps with its picture in the left channel (see
+[Black and white](#black-and-white-established)), and its black and white figure of
+80 x 80 non-square with 16 greys matches too. The page seems to have carried black and
+white facts over to the later players, so nothing on it should be preferred to the disc.
 
 ## The frame header (established)
 
@@ -419,6 +448,125 @@ because their closing frames send every key to the failure clip. `emulation.inst
 is on by default, and turning it off restores the deferred behaviour. The `vxp run`
 script keeps both, as `choose N` (at once) and `choice N` (at the end of the segment).
 
+## Black and white (established)
+
+The original VideoNow is a different format from the ground up: no sync word, no register
+file, no branching, a smaller grey picture and a faster stream of sound. What follows is
+read from two retail discs, *Rugrats: All Growed Up* parts 1 and 2, each a single `.bin`
+of ten tracks, and checked against PVDTools and its `format.txt`.
+
+### Groups
+
+The disc is read as ordinary 16-bit stereo CD audio, and each four-byte stereo sample is
+one group. The left channel holds two video bytes and the right a marker byte and then an
+audio byte:
+
+```
+| video | video | marker | audio | video | video | marker | audio | ...
+```
+
+So of the 176 400 bytes/s, half is video, a quarter is markers and a quarter is sound:
+**44 100 audio bytes a second** at one-times CD speed. Tracks start on a group boundary.
+
+### Frames
+
+The marker says what the group's video bytes are part of, and it marks out every frame:
+
+| Groups | Marker | Video bytes |
+|-------:|--------|-------------|
+| 670 | header: `E1`, `C3` or `A5` | the marker again, 1 340 bytes |
+| 1 600 | `5A`, picture | 3 200 bytes of picture |
+| 670 | footer: `D2`, `B4` or `96`, pairing with the header | the marker again, 1 340 bytes |
+
+A frame is **2 940 groups, 11 760 bytes** of disc: 5 880 video bytes, 2 940 marker bytes
+and 2 940 audio samples, or **15 frames a second** at one-times speed.
+
+The three pairs differ in how they are used, and their bit patterns form a series
+(`E1 D2 C3 B4 A5 96`, high nibble falling as the low one rises):
+
+- `C3`/`B4` mark ordinary frames, all but a handful.
+- `E1`/`D2` mark the first five frames of the VideoNow logo on track 1, and one cut-off
+  header at the start of part 2's track 2. The logo's `E1` headers are the only ones
+  whose video bytes carry anything but the marker: 68 bytes in which the pairs `(00, 00)`
+  and then `(2k+1, k)` for k = 1 to 15 each appear twice, then `(06, 23)` twice. That reads like the
+  Color and XP headers' `(value, register)` pairs loading a 16-step grey ramp, but no
+  player has been watched reading it.
+- `A5`/`96` mark the last frame of each programme: the end of the logo (track 1), of the
+  feature (part 1 track 8, part 2 track 8) and of the end card (track 9). Only padding
+  follows them.
+
+The markers are what `vxp` detects a black and white track by, and finds its frames by.
+The earlier notes call the right channel's extra byte "a constant stream of `0x5a`"
+sync data; it is constant only across the picture.
+
+### Tracks cut through frames
+
+A long programme is mastered as one stream and then cut into tracks wherever the index
+falls, so tracks do not start or end on frame boundaries. On part 1, tracks 3 to 8 are
+one continuous stream: track 4 opens with the last 238 picture groups of the frame whose
+header ended track 3, and track 3's last whole frame and track 4's first are two frames
+apart in the same shot, with the split frame between them. The first header after a boundary is often short
+(213 groups at the start of part 1 track 7, 125 on part 2 track 4), so the frames are
+not on a fixed grid from the start of a track either.
+
+Separate programmes are padded instead: tracks 1, 2 and 9 open with 776 groups of zeros
+(video, marker and audio all zero) and the last track of each programme closes with
+20 980 of them, about half a second.
+
+`vxp` reads a black and white track through once to index it, counts only the frames
+whose picture lies wholly inside the track, and gives each frame the sound from its own
+header to the next frame's. The first and last frames of a track also take the sound
+beyond them, so the partial frame at a cut loses its picture (one frame in fifteen of a
+second) but none of its sound. The zeros of the padding are played as silence rather
+than as full-scale negative samples.
+
+### Picture
+
+**80 x 80 pixels of 16 greys**, 40 bytes to a row, two pixels to a byte with the **high
+nibble on the left**, 0 black and 15 white. The rows run top to bottom with no
+interleaving, which the title cards confirm: the "END OF DISC, PRESS STOP" card and the
+Klasky Csupo logo decode as clean, unsheared text. Swapping the nibbles instead tears
+every vertical edge into teeth.
+
+The pixels are not square either. 80 x 80 of 4:3 broadcast animation needs a pixel
+aspect of 4/3, which is exactly the shape `vxp` gives Color and XP (144 x 80 at 0.74 is
+also 4:3), so the window and `video.pixelAspect` are shared and a black and white picture
+fills the same frame. It checks out on the disc: the ball in part 1 track 2, frame 200
+spans 25 pixels by 33, which is round at 4/3; the logo's speaker cone and the STOP sign
+come out round and regular.
+
+### Sound and speed
+
+Unsigned 8-bit mono, one sample a group, silence at `0x80`, continuous across the header
+and footer (the step between samples is the same inside a picture run as across its
+edges). The marker is not sound.
+
+The discs play at **one-times CD speed: 44 100 Hz and 15 fps.** Two lines agree:
+
+- **Running time.** *All Growed Up* runs about 45 minutes. Each disc holds 24 minutes
+  at 1x, and taking away the logo, the opening titles and the end card that both carry,
+  the feature comes to 22:48 on part 1 (tracks 3 to 8) and 22:52 on part 2, or 45:40
+  together. At 2x the whole special would be under 23 minutes, and a two-disc release
+  would be half empty. Part 2 ends on the Klasky Csupo production logo, so the discs
+  are the first and second halves.
+- **Speech rate.** At 44 100 Hz the soundtrack's envelope swells and fades about 3.9 to
+  4.0 times a second (part 1 and part 2), the pace of syllables in ordinary speech; the
+  same measure gives 4.6 on the Aly & AJ disc's bonus track and 4.1 on Thomas, both XP
+  at 35 280 Hz. At 2x it would be near 8. Voiced pitch comes out around 330 to 370 Hz, the
+  register of the babies' voices, which at 2x would be implausibly high.
+
+PVDTools' own WAV header also says 44 100 Hz mono 8-bit for black and white.
+
+### What PVDTools does differently
+
+PVDTools' black and white path (`handleBlackAndWhite`) splits the groups the same way
+and takes audio from the fourth byte, discarding the marker. It then treats frames as a
+fixed 5 880 video bytes from the first header, finding headers by the video bytes rather
+than by the markers, so a pixel that happens to equal a header byte, or a short header,
+throws it off. It writes each 3 200-byte picture as a 40 x 80 image with one byte to a
+pixel, without splitting the nibbles, so its frames are half width and show only the
+high-nibble pixel clearly.
+
 ## Not yet established
 
 These are open questions. `vxp` is deliberately conservative about them.
@@ -432,17 +580,24 @@ the menu, which fits four directions, a select and a menu key. `vxp` maps slots 
 are read from how the discs are cut, not observed on a player. Both fit every case in
 the corpus.
 
-**The Color player's speed.** See [Audio](#audio-established): Color is kept at
-one-times CD speed for want of a disc to check it against.
+**The Color player's speed.** Color-format frames are read at 2x because every one
+examined shares a disc with 2x content (see [Audio](#audio-established)), but no disc
+whose programme is Color-format has been checked, and no Color player has been measured.
+If one turns up that runs twice as long as it should, Color's `DiscSpeed` is the one
+number to change.
 
-**Black and white VideoNow.** A different interleave and a 4-bit greyscale 80 x 80
-picture. Detected and reported but not yet decoded.
+**Black and white details.** The format and the speed are settled by two discs of one
+title. What the `E1` and `A5` frames tell the player (a grey ramp to load, the end of a
+programme to stop at) is inferred from where they sit, and whether any black and white
+disc cuts its tracks on frame boundaries, or holds more than one kind of header ramp, is
+unknown.
 
 ## Sources
 
 - [PVDTools](https://github.com/saramibreak/PVDTools) by saramibreak — prior C decoder for
   all three variants; the source of the sync word, frame sizes and the pixel zig-zag.
 - [pvdtools.sourceforge.net/format.txt](https://pvdtools.sourceforge.net/format.txt) —
-  notes on the original black and white format.
+  notes on the original black and white format: the left and right channel split and the
+  1 340 + 3 200 + 1 340 byte frame, which the Rugrats discs bear out.
 - Everything about the header register map, the branch table and the segment kinds was
   derived for this project by differential analysis across tracks and discs.

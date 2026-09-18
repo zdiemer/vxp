@@ -590,7 +590,8 @@ public static class Menus
                 {
                     Label = "Disc sample rate",
                     Help = "What normal speed means for an XP disc. 35280 Hz is twice CD speed, where "
-                           + "the episodes run to their broadcast length. A Color disc is scaled to match.",
+                           + "the episodes run to their broadcast length. Color plays at the same rate, "
+                           + "and a black and white disc is scaled to match.",
                     Get = () => emulation.DiscSampleRate,
                     Set = v => emulation.DiscSampleRate = v,
                     Minimum = 16000, Maximum = 40000, Step = 40, Default = FrameLayout.Xp.PlaybackSampleRate,
@@ -858,8 +859,9 @@ public static class Menus
         {
             disc.Name,
             "",
-            $"Format         VideoNow {layout?.Format.ToString() ?? "unknown"}",
-            $"Picture        {FrameLayout.Width}x{FrameLayout.Height}, 4 bits per channel",
+            $"Format         VideoNow {layout?.Format.ShortName() ?? "unknown"}",
+            $"Picture        {layout?.PictureWidth ?? FrameLayout.Width}x{layout?.PictureHeight ?? FrameLayout.Height}, "
+            + (layout?.PixelDescription ?? FrameLayout.Xp.PixelDescription),
             $"Frame rate     {layout?.PlaybackFrameRate ?? 0:0.####} fps",
             $"Sound          {layout?.PlaybackSampleRate ?? 0} Hz mono, {layout?.DiscSpeed ?? 0}x CD speed",
             $"Frame size     {layout?.StreamBytes ?? 0} bytes on disc",

@@ -30,8 +30,8 @@ public static class DiscCommands
                 disc = map.Name,
                 format = map.Layout?.Format.ToString() ?? "unknown",
                 interactive = map.IsInteractive,
-                width = FrameLayout.Width,
-                height = FrameLayout.Height,
+                width = map.Layout?.PictureWidth ?? FrameLayout.Width,
+                height = map.Layout?.PictureHeight ?? FrameLayout.Height,
                 frameRate = map.Layout?.PlaybackFrameRate,
                 audioSampleRate = map.Layout?.PlaybackSampleRate,
                 discSpeed = map.Layout?.DiscSpeed,
@@ -53,10 +53,10 @@ public static class DiscCommands
         }
 
         Console.WriteLine($"Disc:   {map.Name}");
-        Console.WriteLine($"Format: VideoNow {map.Layout.Format}{(map.IsInteractive ? " (interactive)" : "")}");
-        Console.WriteLine($"Video:  {FrameLayout.Width}x{FrameLayout.Height}, 4 bits per channel, {map.Layout.PlaybackFrameRate:0.####} fps");
+        Console.WriteLine($"Format: VideoNow {map.Layout.Format.ShortName()}{(map.IsInteractive ? " (interactive)" : "")}");
+        Console.WriteLine($"Video:  {map.Layout.PictureWidth}x{map.Layout.PictureHeight}, {map.Layout.PixelDescription}, {map.Layout.PlaybackFrameRate:0.####} fps");
         Console.WriteLine($"Audio:  {map.Layout.PlaybackSampleRate} Hz mono, 8-bit unsigned on disc");
-        Console.WriteLine($"Speed:  {map.Layout.DiscSpeed}x CD, {FrameLayout.AudioBytesPerSecond} audio bytes per second at 1x");
+        Console.WriteLine($"Speed:  {map.Layout.DiscSpeed}x CD, {map.Layout.StreamSampleRate} audio bytes per second at 1x");
         Console.WriteLine($"Frame:  {map.Layout.StreamBytes} bytes on disc = {map.Layout.VideoBytes} video + {map.Layout.AudioBytes} audio");
         Console.WriteLine($"Tracks: {map.Tracks.Count} ({map.PlayableTracks.Count()} with video)");
         Console.WriteLine();
@@ -103,7 +103,7 @@ public static class DiscCommands
                           + (track.Blank ? "  [blank]" : "");
             Console.WriteLine(
                 $"{track.Number,3}  {track.FrameCount,7}  {track.Duration:mm\\:ss\\.ff}  " +
-                $"{track.Format,7}  {track.Title}{warning}");
+                $"{track.Format.ShortName(),7}  {track.Title}{warning}");
         }
     }
 
@@ -261,6 +261,13 @@ public static class DiscCommands
             var reader = new TrackReader(track, layout);
             Console.WriteLine($"=== Track {track.Number}  ({reader.FrameCount} frames)  {track.Title}");
 
+            if (layout.Monochrome)
+            {
+                Console.WriteLine("  Black and white: frames carry no register file.");
+                Console.WriteLine();
+                continue;
+            }
+
             var headers = new List<FrameHeader>();
             for (var i = 0; i < Math.Min(reader.FrameCount, sampleCount); i++)
             {
@@ -327,12 +334,12 @@ public static class DiscCommands
         // Decode every frame of every track to prove the whole disc reads back cleanly.
         if (args.Has("deep"))
         {
-            var rgba = new byte[VideoDecoder.RgbaFrameBytes];
             foreach (var info in map.PlayableTracks)
             {
                 var track = disc.FindTrack(info.Number)!;
                 var layout = FormatDetector.Detect(track)!;
                 var reader = new TrackReader(track, layout);
+                var rgba = new byte[layout.RgbaBytes];
 
                 for (var i = 0; i < reader.FrameCount; i++)
                 {
@@ -343,7 +350,7 @@ public static class DiscCommands
                         break;
                     }
 
-                    VideoDecoder.DecodeRgba(frame.PixelData, rgba);
+                    VideoDecoder.Decode(frame, rgba);
                 }
 
                 // Progress is for a person watching a long check, so it goes to stderr
