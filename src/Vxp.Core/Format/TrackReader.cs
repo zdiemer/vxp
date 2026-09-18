@@ -75,8 +75,38 @@ public sealed class TrackReader
     /// <summary>Track number being read.</summary>
     public int TrackNumber => _track.Number;
 
-    /// <summary>Duration of the track at the disc's exact frame rate.</summary>
+    /// <summary>Duration of the track at the layout's playback rate.</summary>
     public TimeSpan Duration => Layout.FrameDuration * FrameCount;
+
+    /// <summary>
+    /// True for a plain linear segment in which no frame carries any picture or sound:
+    /// all-zero pixels and audio pinned at 0x80, under an ordinary header.
+    /// </summary>
+    /// <remarks>
+    /// Mastering leaves these between the title sequence and the first real segment: on
+    /// <i>Batman vs The Joker</i> tracks 3 and 4 are 217 frames of black silence, and the
+    /// title's own register 0x4F steps straight over them to track 5. A segment that
+    /// offers a choice or redirects matters even with nothing to show, so only
+    /// <see cref="SegmentKind.Linear"/> counts. The scan stops at the first frame with
+    /// anything in it, so on a track with content it costs a frame or two.
+    /// </remarks>
+    public bool IsBlank()
+    {
+        if (FrameCount == 0) return false;
+
+        for (var i = 0; i < FrameCount; i++)
+        {
+            var frame = ReadFrame(i);
+            if (frame is null) return false;
+
+            if (i == 0 && frame.ReadHeader().Kind != SegmentKind.Linear) return false;
+
+            if (frame.PixelData.ContainsAnyExcept((byte)0x00)) return false;
+            if (frame.Audio.AsSpan().ContainsAnyExcept((byte)0x80)) return false;
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// Reads the frame at <paramref name="frameIndex"/>, or <see langword="null"/> past the end

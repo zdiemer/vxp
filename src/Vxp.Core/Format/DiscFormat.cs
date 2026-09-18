@@ -47,10 +47,15 @@ public sealed record FrameLayout
     public const int DiscBytesPerSecond = 75 * 2352;
 
     /// <summary>
-    /// Audio sample rate in Hz. Exactly one tenth of the disc byte rate, because one
-    /// byte in ten is audio. Samples are unsigned 8-bit mono.
+    /// Audio bytes the stream carries per second of disc read at one-times CD speed:
+    /// exactly one tenth of the disc byte rate, because one byte in ten is audio. Each
+    /// byte is one unsigned 8-bit mono sample.
     /// </summary>
-    public const int AudioSampleRate = DiscBytesPerSecond / GroupBytes;
+    /// <remarks>
+    /// This describes the stream, not the speed it is played at. An XP player reads at
+    /// twice CD speed; see <see cref="PlaybackSampleRate"/>.
+    /// </remarks>
+    public const int AudioBytesPerSecond = DiscBytesPerSecond / GroupBytes;
 
     /// <summary>Displayed picture width in pixels.</summary>
     public const int Width = 144;
@@ -71,6 +76,13 @@ public sealed record FrameLayout
     /// <summary>Which disc variant this layout describes.</summary>
     public required DiscFormat Format { get; init; }
 
+    /// <summary>
+    /// Multiple of CD speed the player reads this variant at: 2 for XP, whose discs only
+    /// run to the length of their episodes at twice CD speed, and 1 for Color, which no
+    /// disc has yet been checked against.
+    /// </summary>
+    public required int DiscSpeed { get; init; }
+
     /// <summary>Bytes the frame occupies in the interleaved disc stream.</summary>
     public required int StreamBytes { get; init; }
 
@@ -89,25 +101,46 @@ public sealed record FrameLayout
     /// <summary>De-interleaved audio bytes (samples) per frame.</summary>
     public int AudioBytes => StreamBytes / GroupBytes * AudioBytesPerGroup;
 
-    /// <summary>Exact frame rate implied by the disc byte rate.</summary>
-    public double FrameRate => (double)DiscBytesPerSecond / StreamBytes;
+    /// <summary>
+    /// Frames per second of disc read at one-times CD speed, from the byte rate alone.
+    /// A fact about the stream; the rate the picture actually moves at is
+    /// <see cref="PlaybackFrameRate"/>.
+    /// </summary>
+    public double StreamFrameRate => (double)DiscBytesPerSecond / StreamBytes;
 
-    /// <summary>Exact duration of one frame.</summary>
-    public TimeSpan FrameDuration => TimeSpan.FromSeconds(AudioBytes / (double)AudioSampleRate);
+    /// <summary>
+    /// The rate the sound plays at, in samples per second: the stream's audio rate at
+    /// <see cref="DiscSpeed"/>. Every time that is shown or written, and every WAV, uses it.
+    /// </summary>
+    public int PlaybackSampleRate => AudioBytesPerSecond * DiscSpeed;
 
-    /// <summary>VideoNow XP: 1976 interleave groups per frame, 504-byte header, 12 sync words.</summary>
+    /// <summary>Frames per second at <see cref="PlaybackSampleRate"/>.</summary>
+    public double PlaybackFrameRate => PlaybackSampleRate / (double)AudioBytes;
+
+    /// <summary>Exact duration of one frame at <see cref="PlaybackSampleRate"/>.</summary>
+    public TimeSpan FrameDuration => TimeSpan.FromSeconds(AudioBytes / (double)PlaybackSampleRate);
+
+    /// <summary>
+    /// VideoNow XP: 1976 interleave groups per frame, 504-byte header, 12 sync words, read
+    /// at twice CD speed: 35 280 Hz and 17.854 fps.
+    /// </summary>
     public static readonly FrameLayout Xp = new()
     {
         Format = DiscFormat.Xp,
+        DiscSpeed = 2,
         StreamBytes = 19760,
         HeaderBytes = 504,
         SyncRepeatCount = 12,
     };
 
-    /// <summary>VideoNow Color: 1960 interleave groups per frame, 360-byte header, 24 sync words.</summary>
+    /// <summary>
+    /// VideoNow Color: 1960 interleave groups per frame, 360-byte header, 24 sync words.
+    /// Played at one-times CD speed, 17 640 Hz and 9 fps, until a Color disc shows otherwise.
+    /// </summary>
     public static readonly FrameLayout Color = new()
     {
         Format = DiscFormat.Color,
+        DiscSpeed = 1,
         StreamBytes = 19600,
         HeaderBytes = 360,
         SyncRepeatCount = 24,

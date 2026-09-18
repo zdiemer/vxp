@@ -120,6 +120,26 @@ public class PlayerTransportTests
     }
 
     [Fact]
+    public void SoundStaysInStepWithThePictureAcrossATrackChange()
+    {
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 2),
+            new TrackSpec(2, 3));
+
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+        player.Play();
+
+        var buffer = new short[player.Layout.AudioBytes];
+        for (var i = 0; i < 4; i++) player.RenderAudio(buffer);
+
+        // Two frames of track 1, then frames 0 and 1 of track 2; the audio ramp stamps
+        // each frame's index into its samples.
+        Assert.Equal(2, player.CurrentTrack);
+        Assert.Equal(2, player.CurrentFrame);
+        Assert.All(buffer, s => Assert.Equal(1 << 8, s));
+    }
+
+    [Fact]
     public void StopsAtTheEndOfTheDisc()
     {
         using var disc = SyntheticDiscFile.Create(new TrackSpec(1, 2));
@@ -348,21 +368,110 @@ public class PlayerBranchTests
         Assert.Equal(expected, player.CurrentTrack);
     }
 
+    /// <summary>
+    /// The episode discs' chapter screens and every quiz question are choice segments that
+    /// name nothing in 0x4F. Answered with their first entry they cycled through the chapters
+    /// and answered each question with key 1; they wait for the viewer instead.
+    /// </summary>
     [Fact]
-    public void WaitingAtAChoicePointPausesInsteadOfMovingOn()
+    public void AnUnansweredChoiceHoldsByPlayingAgain()
     {
         using var disc = SyntheticDiscFile.Create(
-            new TrackSpec(1, 2, SegmentKind.Choice, Branches: [3]),
+            new TrackSpec(1, 3, SegmentKind.Choice, Branches: [3]),
+            new TrackSpec(2, 2),
             new TrackSpec(3, 2));
 
-        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath)) { Timeout = ChoiceTimeout.Wait };
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+        Assert.Equal(ChoiceTimeout.Wait, player.Timeout);
+        player.Play();
+
+        var buffer = new short[player.Layout.AudioBytes];
+        var frames = new List<int>();
+        for (var i = 0; i < 7; i++)
+        {
+            player.RenderAudio(buffer);
+            frames.Add(player.CurrentFrame);
+        }
+
+        // Round and round, picture and sound both, as a segment naming itself in 0x4F does.
+        Assert.Equal([1, 2, 3, 1, 2, 3, 1], frames);
+        Assert.Equal(1, player.CurrentTrack);
+        Assert.Equal(TransportState.Playing, player.State);
+        Assert.Empty(player.History);
+
+        Assert.True(player.TakeChoiceNow(0));
+        Assert.Equal(3, player.CurrentTrack);
+    }
+
+    [Fact]
+    public void AKeyPressedWhileHoldingIsTakenAtTheEndOfTheSegment()
+    {
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 3, SegmentKind.Choice, Branches: [3]),
+            new TrackSpec(3, 2));
+
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+        player.Play();
+
+        var buffer = new short[player.Layout.AudioBytes];
+        for (var i = 0; i < 5; i++) player.RenderAudio(buffer);
+        Assert.Equal(1, player.CurrentTrack);
+
+        Assert.True(player.PressChoice(0));
+        RunToNextTrack(player);
+        Assert.Equal(3, player.CurrentTrack);
+    }
+
+    [Fact]
+    public void ATaggedSegmentThatMissesEveryBandCarriesOnRatherThanHolding()
+    {
+        // The viewer is not asked anything on a tagged segment, so there is nothing to wait for.
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 2, SegmentKind.TaggedChoice, Branches: [3], Thresholds: [0x70]),
+            new TrackSpec(2, 2),
+            new TrackSpec(3, 2));
+
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+        player.Play();
+        RunToNextTrack(player);
+
+        Assert.Equal(2, player.CurrentTrack);
+    }
+
+    /// <summary>
+    /// Episodes run four minutes a segment and carry the menu key in slot 6 throughout; it
+    /// has to answer when pressed, not when the segment ends.
+    /// </summary>
+    [Fact]
+    public void TheMenuKeyOnALongSegmentActsAtOnce()
+    {
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 2, SegmentKind.Choice, Branches: [0, 0, 0, 0, 2]),
+            new TrackSpec(2, 400, Branches: [0, 0, 0, 0, 0, 1]));
+
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+        player.SelectTrack(2);
         player.Play();
 
         var buffer = new short[player.Layout.AudioBytes];
         for (var i = 0; i < 10; i++) player.RenderAudio(buffer);
 
+        Assert.True(player.TakeChoiceNow(5));
         Assert.Equal(1, player.CurrentTrack);
-        Assert.Equal(TransportState.Paused, player.State);
+        Assert.Equal(0, player.CurrentFrame);
+    }
+
+    [Fact]
+    public void PositionAndDurationAreAtThePlaybackRate()
+    {
+        using var disc = SyntheticDiscFile.Create(new TrackSpec(1, 40));
+
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+        player.SeekToFrame(20);
+
+        // Twice CD speed: 40 frames of 1976 samples at 35 280 Hz is 2.24 s, not 4.48.
+        Assert.Equal(40 * 1976 / 35280.0, player.TrackDuration.TotalSeconds, 4);
+        Assert.Equal(20 * 1976 / 35280.0, player.Position.TotalSeconds, 4);
     }
 
     [Fact]
@@ -787,6 +896,38 @@ public class DiscMapTests
 
         Assert.Empty(DiscMap.Build(image).Find(1)!.Branches);
         Assert.Equal([2, 3], DiscMap.Build(image, everyFrame: true).Successors(1).Order());
+    }
+
+    /// <summary>
+    /// Batman tracks 3 and 4 are black and silent; the map listed them as ordinary tracks
+    /// and ran disc order through them, where the player steps over them.
+    /// </summary>
+    [Fact]
+    public void BlankTracksAreMarkedAndDiscOrderStepsOverThem()
+    {
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 2),
+            new TrackSpec(2, 2, Blank: true),
+            new TrackSpec(3, 3, Blank: true),
+            new TrackSpec(4, 2),
+            new TrackSpec(5, 2, SegmentKind.TaggedChoice, Branches: [4], Blank: true));
+
+        using var image = DiscImage.Open(disc.CuePath);
+
+        foreach (var everyFrame in new[] { false, true })
+        {
+            var map = DiscMap.Build(image, everyFrame);
+
+            Assert.False(map.Find(1)!.Blank);
+            Assert.True(map.Find(2)!.Blank);
+            Assert.True(map.Find(3)!.Blank);
+            Assert.False(map.Find(4)!.Blank);
+            Assert.False(map.Find(5)!.Blank);
+
+            Assert.Equal([4], map.Successors(1));
+            Assert.Equal([4], map.Successors(2));
+            Assert.Equal([1, 4, 5], map.Reachable(1));
+        }
     }
 
     [Fact]

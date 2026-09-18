@@ -43,6 +43,51 @@ public class SettingsStoreTests
         Assert.Equal(NavigationPolicy.DiscOrder, SettingsStore.Migrate(current).Emulation.Navigation);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void OldFilesMoveToHoldingAtAChoiceAndJumpingOnThePress(int version)
+    {
+        var old = new VxpSettings { Version = version };
+        old.Emulation.ChoiceTimeout = ChoiceTimeout.FirstBranch;
+        old.Emulation.InstantChoices = false;
+
+        var migrated = SettingsStore.Migrate(old);
+
+        Assert.Equal(ChoiceTimeout.Wait, migrated.Emulation.ChoiceTimeout);
+        Assert.True(migrated.Emulation.InstantChoices);
+        Assert.Equal(VxpSettings.CurrentVersion, migrated.Version);
+    }
+
+    [Fact]
+    public void OldFilesKeepAChoiceTimeoutThatWasNotTheOldDefault()
+    {
+        var old = new VxpSettings { Version = 2 };
+        old.Emulation.ChoiceTimeout = ChoiceTimeout.DiscOrder;
+
+        Assert.Equal(ChoiceTimeout.DiscOrder, SettingsStore.Migrate(old).Emulation.ChoiceTimeout);
+    }
+
+    [Fact]
+    public void ACurrentFileKeepsDeferredChoicesAndFirstBranchIfChosen()
+    {
+        var current = new VxpSettings();
+        current.Emulation.ChoiceTimeout = ChoiceTimeout.FirstBranch;
+        current.Emulation.InstantChoices = false;
+
+        var migrated = SettingsStore.Migrate(current);
+
+        Assert.Equal(ChoiceTimeout.FirstBranch, migrated.Emulation.ChoiceTimeout);
+        Assert.False(migrated.Emulation.InstantChoices);
+    }
+
+    [Fact]
+    public void TheDiscSampleRateDefaultsToTheXpPlaybackRate()
+    {
+        Assert.Equal(FrameLayout.Xp.PlaybackSampleRate, new VxpSettings().Emulation.DiscSampleRate);
+        Assert.Equal(35280, new VxpSettings().Emulation.DiscSampleRate);
+    }
+
     [Fact]
     public void PathsAreUnique()
     {

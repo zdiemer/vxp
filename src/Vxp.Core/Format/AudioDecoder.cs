@@ -4,8 +4,8 @@ namespace Vxp.Format;
 /// Converts the VideoNow audio byte stream into signed 16-bit PCM.
 /// </summary>
 /// <remarks>
-/// The audio half of the interleave is unsigned 8-bit mono at
-/// <see cref="FrameLayout.AudioSampleRate"/> Hz; silence sits at 0x80.
+/// The audio half of the interleave is unsigned 8-bit mono, played at
+/// <see cref="FrameLayout.PlaybackSampleRate"/> Hz; silence sits at 0x80.
 /// </remarks>
 public static class AudioDecoder
 {

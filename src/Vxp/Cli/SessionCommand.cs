@@ -112,7 +112,7 @@ public static class SessionCommand
             {
                 var directory = Path.GetDirectoryName(Path.GetFullPath(wavPath));
                 if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
-                _wav = new WavWriter(wavPath, FrameLayout.AudioSampleRate);
+                _wav = new WavWriter(wavPath, player.Layout.PlaybackSampleRate);
             }
 
             player.FrameDecoded += OnFrameDecoded;
@@ -238,7 +238,7 @@ public static class SessionCommand
             // own track sits there until the viewer picks something, which is what Teen
             // Titans track 23 does. That is the right thing on the hardware and a hang in
             // a script, so a scripted run always has a way back out.
-            var limit = (long)_args.Int("max-seconds", 3600) * FrameLayout.AudioSampleRate;
+            var limit = (long)_args.Int("max-seconds", 3600) * _player.Layout.PlaybackSampleRate;
             var rendered = 0L;
 
             if (operand is null or "all")
@@ -268,7 +268,7 @@ public static class SessionCommand
                 return;
             }
 
-            var frames = CommandLine.ParseDurationInFrames(operand, _player.Layout.FrameRate);
+            var frames = CommandLine.ParseDurationInFrames(operand, _player.Layout.PlaybackFrameRate);
             var samples = (long)frames * _player.Layout.AudioBytes;
             var done = 0L;
 
@@ -302,7 +302,7 @@ public static class SessionCommand
         {
             if (operand is null) throw new ArgumentException("seek needs a duration, such as '5s' or '-2s'.");
 
-            var frames = CommandLine.ParseDurationInFrames(operand.TrimStart('+'), _player.Layout.FrameRate);
+            var frames = CommandLine.ParseDurationInFrames(operand.TrimStart('+'), _player.Layout.PlaybackFrameRate);
             _player.SeekToFrame(_player.CurrentFrame + frames);
         }
 

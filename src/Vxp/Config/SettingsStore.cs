@@ -110,6 +110,18 @@ public static class SettingsStore
                 settings.Emulation.Navigation = NavigationPolicy.FollowHeader;
         }
 
+        if (settings.Version < 3)
+        {
+            // Versions 1 and 2 wrote their defaults into every file: answering an unanswered
+            // choice with its first entry, and holding a key press until the segment ended.
+            // Both turned out wrong against the discs, so the stored values are taken to be
+            // those defaults rather than choices, as with disc order above.
+            if (settings.Emulation.ChoiceTimeout == ChoiceTimeout.FirstBranch)
+                settings.Emulation.ChoiceTimeout = ChoiceTimeout.Wait;
+
+            settings.Emulation.InstantChoices = true;
+        }
+
         settings.Version = VxpSettings.CurrentVersion;
         return settings;
     }

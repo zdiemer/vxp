@@ -55,7 +55,7 @@ public sealed unsafe class PlayerWindow : IDisposable
     /// The output device's rate: an XP player reads at twice CD speed, so this is where the
     /// disc's sound lands at normal speed and the resampler has nothing to do.
     /// </summary>
-    private const int DeviceSampleRate = 2 * FrameLayout.AudioSampleRate;
+    private static readonly int DeviceSampleRate = FrameLayout.Xp.PlaybackSampleRate;
 
     private readonly short[] _mixBuffer = new short[2048];
     private readonly byte[] _displayRgba = new byte[VideoDecoder.RgbaFrameBytes];
@@ -1010,8 +1010,17 @@ public sealed unsafe class PlayerWindow : IDisposable
     /// The player speed for a percentage of normal. The device runs at a fixed rate, so
     /// the configured disc rate is folded in as a resampling ratio.
     /// </summary>
+    /// <remarks>
+    /// The setting is the rate for an XP disc. Another variant keeps its own playback rate
+    /// scaled by the same trim, so a Color disc plays at one-times speed until the setting
+    /// is moved.
+    /// </remarks>
     private double PlaybackRate(int percent)
-        => percent / 100.0 * _settings.Emulation.DiscSampleRate / DeviceSampleRate;
+    {
+        var trim = _settings.Emulation.DiscSampleRate / (double)FrameLayout.Xp.PlaybackSampleRate;
+        var native = _player?.Layout.PlaybackSampleRate ?? FrameLayout.Xp.PlaybackSampleRate;
+        return percent / 100.0 * trim * native / DeviceSampleRate;
+    }
 
     private MenuContext BuildContext() => new()
     {

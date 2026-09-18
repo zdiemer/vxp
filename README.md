@@ -6,8 +6,8 @@
 
 ![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?style=flat-square&logo=dotnet&logoColor=white)
 ![Discs](https://img.shields.io/badge/discs-VideoNow_XP_+_Color-f2a33c?style=flat-square)
-![Picture](https://img.shields.io/badge/picture-144x80_@_8.93_fps-4fd2e3?style=flat-square)
-![Audio](https://img.shields.io/badge/audio-17640_Hz_mono-4fd2e3?style=flat-square)
+![Picture](https://img.shields.io/badge/picture-144x80_@_17.85_fps-4fd2e3?style=flat-square)
+![Audio](https://img.shields.io/badge/audio-35280_Hz_mono-4fd2e3?style=flat-square)
 ![Interactive](https://img.shields.io/badge/branching-read_from_the_disc-8f7ae8?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-3f8f66?style=flat-square)
 
@@ -65,10 +65,12 @@ is those lines.
 Everything else falls out of that one fact:
 
 - The stream is interleaved **nine video bytes to one audio byte**. A CD reads 176 400
-  bytes a second, so the audio is 17 640 Hz — a tenth of the disc — and that is why.
+  bytes a second, so a tenth of the disc, 17 640 bytes a second, is sound. The XP reads
+  at twice CD speed, which is where the episodes run to their broadcast length, so its
+  sound plays at **35 280 Hz**.
 - Frames are a fixed size on disc, 19 760 bytes on XP and 19 600 on Color, both carrying
   the same 144 x 80 picture. The frame rate is not stored anywhere; it is
-  `176 400 / 19 760` = **8.9271 fps**, arithmetic rather than metadata.
+  `2 x 176 400 / 19 760` = **17.854 fps** on XP, arithmetic rather than metadata.
 - Which variant a disc is comes from **counting sync-word repeats** in the frame header:
   24 means Color, 12 means XP.
 - That 144 x 80 is the shape of the *storage*, not of the picture. The panel's pixels are
@@ -89,7 +91,7 @@ Everything else falls out of that one fact:
 <img src="docs/media/picture.gif" alt="The opening of a VideoNow XP disc, decoded frame by frame" width="400">
 
 <em>A title sequence coming off the disc: 144 x 80 pixels, three 4-bit<br>
-channels each, 8.93 frames a second, and not a codec in sight.</em>
+channels each, 17.85 frames a second, and not a codec in sight.</em>
 
 </div>
 
@@ -145,7 +147,7 @@ vxp <disc.cue|disc.zip> [options]
 | `--mute` | Start silent |
 | `--loop MODE` | `none`, `track` or `disc` |
 | `--navigation MODE` | `discOrder` or `followHeader` |
-| `--choice-timeout MODE` | `firstBranch`, `discOrder` or `wait` |
+| `--choice-timeout MODE` | `wait` (the default: hold until a key is pressed), `firstBranch` or `discOrder` |
 | `--no-config` | Ignore the settings file and use defaults; nothing is saved |
 
 Run `vxp` with no disc — or double-click `vxp.exe` — and the player opens empty. Open a
@@ -240,7 +242,9 @@ the shell — see [Settings from the command line](#settings-from-the-command-li
 
 Branches are cut as ordinary tracks, and each segment's header declares where it can go.
 At a decision point `vxp` reads that table out of the disc and offers exactly the
-destinations it names:
+destinations it names. A key takes its branch as soon as it is pressed, and a question
+left unanswered plays again until one is, which is how the discs are cut to be played
+(`docs/format.md` has the evidence):
 
 <div align="center">
 
@@ -334,7 +338,7 @@ vxp run "Some Title.cue" --commands "track 6; choice 2; play track; expect track
 | `--wav FILE` | Record the session soundtrack |
 | `--frames-out DIR` | Write every decoded frame as a PNG |
 | `--max-frames N` | Stop writing frames after N |
-| `--max-seconds N` | Ceiling on `play all` and `play track`, in disc seconds. Default 3600 |
+| `--max-seconds N` | Ceiling on `play all` and `play track`, in seconds of playback. Default 3600 |
 | `--json` | Machine-readable `status` output |
 
 Script commands, one per line or separated by semicolons, with `#` for comments:

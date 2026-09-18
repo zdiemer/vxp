@@ -10,11 +10,15 @@ namespace Vxp.Emulation;
 /// <param name="Format">Which VideoNow variant this track is mastered in.</param>
 /// <param name="FrameCount">Whole frames the track contains.</param>
 /// <param name="DeclaredFrameCount">Frame count the disc declares in its own header.</param>
-/// <param name="Duration">Running time at the disc's exact frame rate.</param>
+/// <param name="Duration">Running time at the layout's playback rate.</param>
 /// <param name="ByteLength">Size of the track in bytes.</param>
 /// <param name="Kind">What kind of segment this is, from its first frame.</param>
 /// <param name="ContinueTrack">Register 0x4F: the track to play next when no branch is taken, or 0.</param>
 /// <param name="Branches">Branch table entries: those of the first frame, or of every frame when surveyed in full.</param>
+/// <param name="Blank">
+/// True for a plain segment that is black and silent throughout (see
+/// <see cref="TrackReader.IsBlank"/>). Disc order passes over these, as the player does.
+/// </param>
 public sealed record TrackInfo(
     int Number,
     string? Title,
@@ -26,7 +30,8 @@ public sealed record TrackInfo(
     long ByteLength,
     SegmentKind Kind,
     int ContinueTrack,
-    IReadOnlyList<BranchEntry> Branches)
+    IReadOnlyList<BranchEntry> Branches,
+    bool Blank = false)
 {
     /// <summary>True when this segment puts a choice to the viewer.</summary>
     public bool OffersChoice => Kind is SegmentKind.Choice or SegmentKind.TaggedChoice;
@@ -44,8 +49,9 @@ public sealed record TrackInfo(
 /// branch graph that connects them.
 /// </summary>
 /// <remarks>
-/// Building a map reads the first frame header of every track, which is fast enough to do on
-/// load and gives both the track browser and the command line one shared model.
+/// Building a map reads the first frame header of every track, and the frames of each up to
+/// the first with any picture or sound in it to tell blank tracks apart. That is fast enough
+/// to do on load and gives both the track browser and the command line one shared model.
 /// </remarks>
 public sealed class DiscMap
 {
@@ -126,7 +132,8 @@ public sealed class DiscMap
                 track.ByteLength,
                 header?.Kind ?? SegmentKind.None,
                 header?.ContinueTrack ?? 0,
-                branches));
+                branches,
+                reader.IsBlank()));
         }
 
         return new DiscMap(disc.Name, FormatDetector.Detect(disc), tracks);
@@ -186,13 +193,14 @@ public sealed class DiscMap
             next.AddRange(queued);
 
             // A choice segment goes nowhere unasked; any other segment falls through to
-            // disc order unless a branch into it queues what comes next.
+            // disc order unless a branch into it queues what comes next. Disc order steps
+            // over blank segments, as the player does.
             if (!track.OffersChoice && queued.Count == 0)
             {
                 var following = Tracks
                     .SkipWhile(t => t.Number != number)
                     .Skip(1)
-                    .FirstOrDefault(t => t.HasVideo);
+                    .FirstOrDefault(t => t.HasVideo && !t.Blank);
 
                 if (following is not null) next.Add(following.Number);
             }

@@ -38,13 +38,19 @@ public enum NavigationPolicy
 /// <summary>What the player does when a choice segment ends and nothing was pressed.</summary>
 public enum ChoiceTimeout
 {
-    /// <summary>Take the first destination the segment offers, as the hardware does.</summary>
+    /// <summary>
+    /// Take the first destination the segment offers. This answers every quiz question
+    /// with key 1, so it is no longer the default.
+    /// </summary>
     FirstBranch,
 
     /// <summary>Carry on in disc order and ignore the branch table.</summary>
     DiscOrder,
 
-    /// <summary>Pause on the last frame and wait for the viewer.</summary>
+    /// <summary>
+    /// Hold on the segment until a key is pressed, playing it again from the start as a
+    /// segment naming itself in register 0x4F does. The default.
+    /// </summary>
     Wait,
 }
 
@@ -68,7 +74,7 @@ public enum LoopMode
 /// <remarks>
 /// <para>
 /// Sound is the master clock. The host pulls PCM through <see cref="RenderAudio"/> at
-/// <see cref="FrameLayout.AudioSampleRate"/> Hz and the player decodes exactly as many
+/// <see cref="FrameLayout.PlaybackSampleRate"/> Hz and the player decodes exactly as many
 /// frames as that consumes, so picture and sound cannot drift and playback runs at the
 /// true disc rate rather than an approximation of it.
 /// </para>
@@ -128,7 +134,7 @@ public sealed class VideoNowPlayer : IDisposable
     public NavigationPolicy Navigation { get; set; } = NavigationPolicy.FollowHeader;
 
     /// <summary>What happens at a choice point when the viewer does nothing.</summary>
-    public ChoiceTimeout Timeout { get; set; } = ChoiceTimeout.FirstBranch;
+    public ChoiceTimeout Timeout { get; set; } = ChoiceTimeout.Wait;
 
     /// <summary>What happens at the end of a track or of the disc.</summary>
     public LoopMode Loop { get; set; } = LoopMode.None;
@@ -284,7 +290,7 @@ public sealed class VideoNowPlayer : IDisposable
     {
         lock (_gate)
         {
-            if (CurrentFrame > Layout.FrameRate)
+            if (CurrentFrame > Layout.PlaybackFrameRate)
             {
                 SelectTrackCore(CurrentTrack);
                 return;
@@ -336,7 +342,7 @@ public sealed class VideoNowPlayer : IDisposable
     {
         lock (_gate)
         {
-            var frames = (int)Math.Round(seconds * Layout.FrameRate);
+            var frames = (int)Math.Round(seconds * Layout.PlaybackFrameRate);
             SeekToFrameCore(CurrentFrame + frames);
         }
     }
@@ -354,9 +360,10 @@ public sealed class VideoNowPlayer : IDisposable
     }
 
     /// <summary>
-    /// Records the viewer choice for the current segment. The jump happens when the
-    /// segment ends, which is how these discs are cut: the choice window is the tail of
-    /// the segment and each destination is a whole separate track.
+    /// Records the viewer choice for the current segment, to be taken when the segment
+    /// ends. The discs read as though the hardware jumps on the press instead, which is
+    /// <see cref="TakeChoiceNow"/>; this is the older, deferred behaviour, kept for
+    /// scripts and for viewers who would rather see each scene out.
     /// </summary>
     /// <remarks>
     /// The entry is looked up in the frame on screen when the button is pressed, because
@@ -387,8 +394,10 @@ public sealed class VideoNowPlayer : IDisposable
     }
 
     /// <summary>
-    /// Takes a branch at once rather than waiting for the segment to end, for viewers who
-    /// would rather not sit through the rest of the scene.
+    /// Takes a branch at once rather than waiting for the segment to end. This is how the
+    /// discs are cut to be played: a timed prompt's success clip picks up the picture from
+    /// the prompt window, not from the end of the segment, and the menu key on an episode
+    /// several minutes long is meant to answer when it is pressed. See <c>docs/format.md</c>.
     /// </summary>
     public bool TakeChoiceNow(int slot)
     {
@@ -408,7 +417,7 @@ public sealed class VideoNowPlayer : IDisposable
 
     /// <summary>
     /// Fills <paramref name="destination"/> with mono 16-bit PCM at
-    /// <see cref="FrameLayout.AudioSampleRate"/> Hz, advancing playback by exactly that
+    /// <see cref="FrameLayout.PlaybackSampleRate"/> Hz, advancing playback by exactly that
     /// much time. Writes silence while paused or stopped.
     /// </summary>
     /// <returns>The number of samples written, always the length of the destination.</returns>
@@ -421,11 +430,14 @@ public sealed class VideoNowPlayer : IDisposable
                 if (State != TransportState.Playing) return Silence(destination, i);
 
                 // At speeds above 1.0 a single output sample can step past a whole frame.
+                // The frame just finished comes off the position before the next is read,
+                // because moving to another segment starts the position again from zero;
+                // taking it off afterwards left the new segment a frame in arrears, reading
+                // before its first sample.
                 while (_audioPosition >= _frameAudio.Length)
                 {
-                    var consumed = _frameAudio.Length;
+                    _audioPosition -= _frameAudio.Length;
                     if (!AdvanceFrame()) return Silence(destination, i);
-                    _audioPosition -= consumed;
                 }
 
                 destination[i] = SampleAt(_audioPosition);
@@ -568,11 +580,15 @@ public sealed class VideoNowPlayer : IDisposable
 
         if (header is { OffersChoice: true })
         {
-            if (Timeout == ChoiceTimeout.Wait)
+            // A question left unanswered is asked again, the way a segment naming itself
+            // in 0x4F repeats: picture and sound play on from the top rather than freezing.
+            // Only a Choice asks the viewer anything; a tagged segment whose score bands
+            // all missed has nothing to wait for and carries on in disc order.
+            if (Timeout == ChoiceTimeout.Wait
+                && header.Kind == SegmentKind.Choice
+                && LoadTrack(CurrentTrack, remember: false))
             {
-                CurrentFrame = Math.Max(0, TrackFrameCount - 1);
-                State = TransportState.Paused;
-                return false;
+                return true;
             }
 
             if (Timeout == ChoiceTimeout.FirstBranch
@@ -666,37 +682,16 @@ public sealed class VideoNowPlayer : IDisposable
     /// True for a plain linear segment in which no frame carries any picture or sound.
     /// </summary>
     /// <remarks>
-    /// Mastering leaves these between the title sequence and the first real segment: on
-    /// <i>Batman vs The Joker</i> tracks 3 and 4 are 217 frames of black silence, and the
-    /// title's own register 0x4F steps straight over them to track 5. Disc order and track
-    /// skipping pass over them as they pass over fill; selecting one directly still plays it.
+    /// See <see cref="TrackReader.IsBlank"/>. Disc order and track skipping pass over these
+    /// as they pass over fill; selecting one directly still plays it.
     /// </remarks>
     public bool IsBlank(int trackNumber)
     {
         if (_blank.TryGetValue(trackNumber, out var blank)) return blank;
 
-        blank = ScanForBlank(GetReader(trackNumber));
+        blank = GetReader(trackNumber)?.IsBlank() == true;
         _blank[trackNumber] = blank;
         return blank;
-    }
-
-    private static bool ScanForBlank(TrackReader? reader)
-    {
-        if (reader is null || reader.FrameCount == 0) return false;
-
-        for (var i = 0; i < reader.FrameCount; i++)
-        {
-            var frame = reader.ReadFrame(i);
-            if (frame is null) return false;
-
-            // Anything that redirects or offers a choice matters even with nothing to show.
-            if (i == 0 && frame.ReadHeader().Kind != SegmentKind.Linear) return false;
-
-            if (frame.PixelData.ContainsAnyExcept((byte)0x00)) return false;
-            if (frame.Audio.AsSpan().ContainsAnyExcept((byte)0x80)) return false;
-        }
-
-        return true;
     }
 
     /// <summary>True if disc order and track skipping should stop at this track.</summary>

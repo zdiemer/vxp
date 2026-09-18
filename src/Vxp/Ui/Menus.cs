@@ -468,7 +468,7 @@ public static class Menus
             player that read video off small pressed CDs.
 
             Picture 144x80, three 4-bit channels per pixel.
-            Sound {FrameLayout.AudioSampleRate} Hz mono, 8-bit on disc.
+            Sound {FrameLayout.Xp.PlaybackSampleRate} Hz mono, 8-bit on disc.
 
             MIT licensed. VideoNow is a trademark of Hasbro; this project is
             not affiliated with or endorsed by Hasbro or Tiger Electronics.
@@ -570,7 +570,7 @@ public static class Menus
                     Default = true,
                 },
                 new MenuHeading { Label = "" },
-                new MenuHeading { Label = $"Disc audio: {FrameLayout.AudioSampleRate} Hz mono, 8-bit" },
+                new MenuHeading { Label = $"Disc audio: 8-bit mono, {FrameLayout.Xp.PlaybackSampleRate} Hz on XP" },
             ],
         };
     }
@@ -589,11 +589,11 @@ public static class Menus
                 new MenuNumber
                 {
                     Label = "Disc sample rate",
-                    Help = "What normal speed means. 35280 Hz is twice CD speed, where the "
-                           + "episodes run to their broadcast length.",
+                    Help = "What normal speed means for an XP disc. 35280 Hz is twice CD speed, where "
+                           + "the episodes run to their broadcast length. A Color disc is scaled to match.",
                     Get = () => emulation.DiscSampleRate,
                     Set = v => emulation.DiscSampleRate = v,
-                    Minimum = 16000, Maximum = 40000, Step = 40, Default = 35280,
+                    Minimum = 16000, Maximum = 40000, Step = 40, Default = FrameLayout.Xp.PlaybackSampleRate,
                     Format = v => $"{v} Hz, {v / (double)FrameLayout.Xp.AudioBytes:0.000} fps",
                 },
                 new MenuNumber
@@ -634,16 +634,21 @@ public static class Menus
 
                 new MenuHeading { Label = "Interactive titles" },
                 EnumChoice("At a choice point", () => emulation.ChoiceTimeout, v => emulation.ChoiceTimeout = v,
-                    "What happens when a choice segment ends and nothing was pressed."),
+                    "What happens when a choice segment ends and nothing was pressed. wait plays it "
+                    + "again until a key is pressed.",
+                    ChoiceTimeout.Wait),
                 new MenuToggle
                 {
                     Label = "Jump immediately",
-                    Help = "Take a branch the moment it is chosen instead of at the end of the scene.",
+                    Help = "Take a branch the moment its key is pressed, as the discs are cut to be "
+                           + "played, instead of at the end of the scene.",
                     Get = () => emulation.InstantChoices,
                     Set = v => emulation.InstantChoices = v,
+                    Default = true,
                 },
                 EnumChoice("Segment order", () => emulation.Navigation, v => emulation.Navigation = v,
-                    "followHeader goes where the disc says; discOrder plays every segment in turn."),
+                    "followHeader goes where the disc says; discOrder plays every segment in turn.",
+                    NavigationPolicy.FollowHeader),
             ],
         };
     }
@@ -809,7 +814,7 @@ public static class Menus
 
         return new MenuAction
         {
-            Label = $"{number,3}  {track.Duration:mm\\:ss}  {track.Title ?? ""}",
+            Label = $"{number,3}  {track.Duration:mm\\:ss}  {(track.Blank ? "[blank] " : "")}{track.Title ?? ""}",
             Help = Describe(track),
             Detail = () => context.Player?.CurrentTrack == number ? "playing" : string.Empty,
             OnActivate = () => context.SelectTrack(number),
@@ -818,6 +823,7 @@ public static class Menus
 
     private static string Describe(TrackInfo track)
     {
+        if (track.Blank) return $"Blank: {track.FrameCount} frames of black and silence, passed over in disc order";
         if (track.Branches.Count == 0) return $"{track.Kind}, {track.FrameCount} frames";
 
         var destinations = string.Join(", ", track.Branches.Select(b => $"{b.Slot + 1}->{b.Track}"));
@@ -854,8 +860,8 @@ public static class Menus
             "",
             $"Format         VideoNow {layout?.Format.ToString() ?? "unknown"}",
             $"Picture        {FrameLayout.Width}x{FrameLayout.Height}, 4 bits per channel",
-            $"Frame rate     {layout?.FrameRate ?? 0:0.####} fps",
-            $"Sound          {FrameLayout.AudioSampleRate} Hz mono",
+            $"Frame rate     {layout?.PlaybackFrameRate ?? 0:0.####} fps",
+            $"Sound          {layout?.PlaybackSampleRate ?? 0} Hz mono, {layout?.DiscSpeed ?? 0}x CD speed",
             $"Frame size     {layout?.StreamBytes ?? 0} bytes on disc",
             $"Tracks         {disc.Tracks.Count} ({disc.PlayableTracks.Count()} with video)",
             $"Running time   {disc.TotalDuration:hh\\:mm\\:ss}",
@@ -983,7 +989,7 @@ public static class Menus
             OnActivate = () => context.Perform(action),
         };
 
-    private static MenuItem EnumChoice<T>(string label, Func<T> get, Action<T> set, string? help = null)
+    private static MenuItem EnumChoice<T>(string label, Func<T> get, Action<T> set, string? help = null, T? fallback = null)
         where T : struct, Enum
     {
         var values = Enum.GetValues<T>();
@@ -995,6 +1001,7 @@ public static class Menus
             Options = values.Select(Humanise).ToArray(),
             Get = () => Math.Max(0, Array.IndexOf(values, get())),
             Set = i => set(values[i]),
+            Default = fallback is { } value ? Math.Max(0, Array.IndexOf(values, value)) : 0,
         };
     }
 

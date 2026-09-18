@@ -32,8 +32,9 @@ public static class DiscCommands
                 interactive = map.IsInteractive,
                 width = FrameLayout.Width,
                 height = FrameLayout.Height,
-                frameRate = map.Layout?.FrameRate,
-                audioSampleRate = FrameLayout.AudioSampleRate,
+                frameRate = map.Layout?.PlaybackFrameRate,
+                audioSampleRate = map.Layout?.PlaybackSampleRate,
+                discSpeed = map.Layout?.DiscSpeed,
                 frameBytes = map.Layout?.StreamBytes,
                 trackCount = map.Tracks.Count,
                 playableTrackCount = map.PlayableTracks.Count(),
@@ -53,8 +54,9 @@ public static class DiscCommands
 
         Console.WriteLine($"Disc:   {map.Name}");
         Console.WriteLine($"Format: VideoNow {map.Layout.Format}{(map.IsInteractive ? " (interactive)" : "")}");
-        Console.WriteLine($"Video:  {FrameLayout.Width}x{FrameLayout.Height}, 4 bits per channel, {map.Layout.FrameRate:0.####} fps");
-        Console.WriteLine($"Audio:  {FrameLayout.AudioSampleRate} Hz mono, 8-bit unsigned on disc");
+        Console.WriteLine($"Video:  {FrameLayout.Width}x{FrameLayout.Height}, 4 bits per channel, {map.Layout.PlaybackFrameRate:0.####} fps");
+        Console.WriteLine($"Audio:  {map.Layout.PlaybackSampleRate} Hz mono, 8-bit unsigned on disc");
+        Console.WriteLine($"Speed:  {map.Layout.DiscSpeed}x CD, {FrameLayout.AudioBytesPerSecond} audio bytes per second at 1x");
         Console.WriteLine($"Frame:  {map.Layout.StreamBytes} bytes on disc = {map.Layout.VideoBytes} video + {map.Layout.AudioBytes} audio");
         Console.WriteLine($"Tracks: {map.Tracks.Count} ({map.PlayableTracks.Count()} with video)");
         Console.WriteLine();
@@ -97,7 +99,8 @@ public static class DiscCommands
                 continue;
             }
 
-            var warning = track.FrameCountMismatch ? "  [declared " + track.DeclaredFrameCount + "]" : "";
+            var warning = (track.FrameCountMismatch ? "  [declared " + track.DeclaredFrameCount + "]" : "")
+                          + (track.Blank ? "  [blank]" : "");
             Console.WriteLine(
                 $"{track.Number,3}  {track.FrameCount,7}  {track.Duration:mm\\:ss\\.ff}  " +
                 $"{track.Format,7}  {track.Title}{warning}");
@@ -124,6 +127,7 @@ public static class DiscCommands
                     t.Title,
                     t.FrameCount,
                     kind = t.Kind,
+                    t.Blank,
                     t.ContinueTrack,
                     t.Branches,
                     successors = map.Successors(t.Number),
@@ -144,7 +148,8 @@ public static class DiscCommands
                     $"{b.Slot + 1}:{string.Join(">", b.PlayList)}" + (b.Tag == 0 ? "" : $"(score>={b.Tag:X2})")));
 
             var continueTrack = track.ContinueTrack == 0 ? "-" : track.ContinueTrack.ToString();
-            Console.WriteLine($"{track.Number,3}  {track.FrameCount,6}  {track.Kind,13}  {continueTrack,4}  {branches}");
+            var blank = track.Blank ? "  [blank: black and silent, skipped in disc order]" : "";
+            Console.WriteLine($"{track.Number,3}  {track.FrameCount,6}  {track.Kind,13}  {continueTrack,4}  {branches}{blank}");
         }
 
         var groups = map.ParallelGroups();
@@ -192,7 +197,9 @@ public static class DiscCommands
         foreach (var track in map.PlayableTracks)
         {
             var shape = track.OffersChoice ? "diamond" : "box";
-            text.AppendLine($"  t{track.Number} [label=\"{track.Number}\\n{track.Duration:mm\\:ss}\", shape={shape}];");
+            var label = track.Blank ? "blank" : $"{track.Duration:mm\\:ss}";
+            var style = track.Blank ? ", style=dashed" : "";
+            text.AppendLine($"  t{track.Number} [label=\"{track.Number}\\n{label}\", shape={shape}{style}];");
         }
 
         foreach (var track in map.PlayableTracks)

@@ -28,7 +28,7 @@ public static class MediaCommands
             ? disc.Tracks
             : [disc.FindTrack(trackNumber.Value) ?? throw new ArgumentException($"No track {trackNumber}.")];
 
-        using var wav = noAudio ? null : new WavWriter(Path.Combine(outDir, "audio.wav"), FrameLayout.AudioSampleRate);
+        using var wav = noAudio ? null : new WavWriter(Path.Combine(outDir, "audio.wav"), PlaybackSampleRate(disc));
         var pcm = new short[65536];
         var rgba = new byte[VideoDecoder.RgbaFrameBytes];
         var exported = 0;
@@ -115,9 +115,10 @@ public static class MediaCommands
         var directory = Path.GetDirectoryName(Path.GetFullPath(output));
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
-        using var wav = new WavWriter(output, FrameLayout.AudioSampleRate);
+        var sampleRate = PlaybackSampleRate(disc);
+        using var wav = new WavWriter(output, sampleRate);
         var pcm = new short[65536];
-        var frames = 0;
+        var samples = 0L;
 
         foreach (var track in tracks)
         {
@@ -132,12 +133,19 @@ public static class MediaCommands
 
                 AudioDecoder.DecodePcm16(frame.Audio, pcm);
                 wav.Write(pcm.AsSpan(0, frame.Audio.Length));
-                frames++;
+                samples += frame.Audio.Length;
             }
         }
 
-        var duration = TimeSpan.FromSeconds(frames * (double)FrameLayout.Xp.AudioBytes / FrameLayout.AudioSampleRate);
+        var duration = TimeSpan.FromSeconds(samples / (double)sampleRate);
         Console.WriteLine($"Wrote {output} ({duration:hh\\:mm\\:ss}).");
         return 0;
     }
+
+    /// <summary>
+    /// The rate a disc's soundtrack is written at: the rate it plays at, so the file runs
+    /// at the right speed, rather than the stream's one-times byte rate.
+    /// </summary>
+    internal static int PlaybackSampleRate(DiscImage disc)
+        => (FormatDetector.Detect(disc) ?? FrameLayout.Xp).PlaybackSampleRate;
 }

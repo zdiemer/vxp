@@ -149,13 +149,17 @@ public sealed class EmulationSettings
     public NavigationPolicy Navigation { get; set; } = NavigationPolicy.FollowHeader;
 
     /// <summary>What happens at a choice point when the viewer does nothing.</summary>
-    public ChoiceTimeout ChoiceTimeout { get; set; } = ChoiceTimeout.FirstBranch;
+    public ChoiceTimeout ChoiceTimeout { get; set; } = ChoiceTimeout.Wait;
 
     /// <summary>What happens at the end of a track or of the disc.</summary>
     public LoopMode Loop { get; set; } = LoopMode.None;
 
-    /// <summary>Take a branch the moment it is chosen instead of at the end of the segment.</summary>
-    public bool InstantChoices { get; set; }
+    /// <summary>
+    /// Take a branch the moment it is chosen instead of at the end of the segment. On by
+    /// default, because that is how the discs are cut: see "When a key press takes effect"
+    /// in <c>docs/format.md</c>.
+    /// </summary>
+    public bool InstantChoices { get; set; } = true;
 
     /// <summary>Playback rate as a percentage of the disc's own rate.</summary>
     public int SpeedPercent { get; set; } = 100;
@@ -165,10 +169,11 @@ public sealed class EmulationSettings
     /// </summary>
     /// <remarks>
     /// One-times CD speed would give 17 640 Hz, but the retail XP discs only run to the
-    /// length of their episodes at twice that, 35 280 Hz. It stays adjustable until
-    /// hardware pins it down.
+    /// length of their episodes at twice that, 35 280 Hz, which is
+    /// <see cref="Vxp.Format.FrameLayout.PlaybackSampleRate"/> for XP. It stays adjustable
+    /// for live playback until hardware pins it down; a Color disc is scaled to match.
     /// </remarks>
-    public int DiscSampleRate { get; set; } = 35280;
+    public int DiscSampleRate { get; set; } = Vxp.Format.FrameLayout.Xp.PlaybackSampleRate;
 
     /// <summary>Rate used while the fast-forward control is held, as a percentage.</summary>
     public int FastForwardPercent { get; set; } = 300;
@@ -227,7 +232,7 @@ public sealed class VxpSettings
     public int Version { get; set; } = CurrentVersion;
 
     /// <summary>Schema version this build writes.</summary>
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     /// <summary>Picture settings.</summary>
     public VideoSettings Video { get; set; } = new();

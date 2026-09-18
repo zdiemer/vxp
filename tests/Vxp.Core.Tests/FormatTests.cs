@@ -25,26 +25,44 @@ public class FrameLayoutTests
     }
 
     [Fact]
-    public void AudioRateIsOneTenthOfTheDiscByteRate()
+    public void AudioIsOneTenthOfTheDiscByteRate()
     {
-        Assert.Equal(17640, FrameLayout.AudioSampleRate);
-        Assert.Equal(FrameLayout.DiscBytesPerSecond / 10, FrameLayout.AudioSampleRate);
+        Assert.Equal(17640, FrameLayout.AudioBytesPerSecond);
+        Assert.Equal(FrameLayout.DiscBytesPerSecond / 10, FrameLayout.AudioBytesPerSecond);
     }
 
     [Theory]
     [InlineData(1976, 17640)] // XP
     [InlineData(1960, 17640)] // Color
-    public void FrameRateFollowsFromTheAudioRate(int audioBytesPerFrame, int sampleRate)
+    public void TheStreamFrameRateFollowsFromTheAudioBytes(int audioBytesPerFrame, int bytesPerSecond)
     {
         var layout = audioBytesPerFrame == 1976 ? FrameLayout.Xp : FrameLayout.Color;
-        Assert.Equal(sampleRate / (double)audioBytesPerFrame, layout.FrameRate, 6);
+        Assert.Equal(bytesPerSecond / (double)audioBytesPerFrame, layout.StreamFrameRate, 6);
     }
 
     [Fact]
-    public void XpRunsSlightlySlowerThanColor()
+    public void XpPlaysAtTwiceCdSpeed()
     {
-        Assert.Equal(9.0, FrameLayout.Color.FrameRate, 6);
-        Assert.True(FrameLayout.Xp.FrameRate < FrameLayout.Color.FrameRate);
+        Assert.Equal(2, FrameLayout.Xp.DiscSpeed);
+        Assert.Equal(35280, FrameLayout.Xp.PlaybackSampleRate);
+        Assert.Equal(17.854, FrameLayout.Xp.PlaybackFrameRate, 3);
+        Assert.Equal(2 * FrameLayout.Xp.StreamFrameRate, FrameLayout.Xp.PlaybackFrameRate, 6);
+    }
+
+    [Fact]
+    public void ColorStaysAtOneTimesUntilADiscSaysOtherwise()
+    {
+        Assert.Equal(1, FrameLayout.Color.DiscSpeed);
+        Assert.Equal(17640, FrameLayout.Color.PlaybackSampleRate);
+        Assert.Equal(9.0, FrameLayout.Color.PlaybackFrameRate, 6);
+    }
+
+    [Fact]
+    public void AFrameLastsItsSamplesAtThePlaybackRate()
+    {
+        // 1976 samples at 35 280 Hz: 56.009 ms, not the 112.018 ms of one-times speed.
+        Assert.Equal(1976 / 35280.0, FrameLayout.Xp.FrameDuration.TotalSeconds, 6);
+        Assert.Equal(1960 / 17640.0, FrameLayout.Color.FrameDuration.TotalSeconds, 6);
     }
 
     [Fact]

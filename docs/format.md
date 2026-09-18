@@ -25,7 +25,8 @@ directly to an LCD controller and a DAC.
   sequence and the first choice, and the title's register `0x4F` names track 5 — the
   disc's own pointer steps over them. Paged through, or played in disc order, they look
   like a hang, so `vxp` passes over them in disc order and track skipping as it does
-  fill, and still plays one if it is selected directly. Blank segments that offer a
+  fill, and still plays one if it is selected directly. `vxp map`, `vxp tracks` and the
+  track browser mark them `[blank]`, and the branch graph leaves them out of disc order. Blank segments that offer a
   choice (Batman tracks 22 and 23) or redirect are not skipped. Tracks that are black but
   carry sound, such as Teen Titans track 2, are content and are not skipped either.
 - The four linear discs each hold a 181-frame black track with a little sound just
@@ -46,18 +47,19 @@ The bytes on the disc are not audio samples. The stream is split in a fixed rati
 | 9 video bytes | 1 audio byte | 9 video bytes | 1 audio byte | ...
 ```
 
-So of the 176 400 bytes/s, nine tenths are video and one tenth is audio. This is why the
-audio rate comes out at exactly **17 640 Hz**: one tenth of the disc byte rate.
+So of the 176 400 bytes/s, nine tenths are video and one tenth is audio: exactly
+**17 640 audio bytes a second** at one-times CD speed. The XP reads at twice that, so its
+sound plays at 35 280 Hz (see [Audio](#audio-established)).
 
 ## Frames (established)
 
 The stream is divided into fixed-size frames. The frame size is the one place where the
 disc variants differ:
 
-| Variant | Frame on disc | Video | Audio | Header | Sync words | Frame rate |
-|---------|--------------:|------:|------:|-------:|-----------:|-----------:|
-| Color   | 19 600 B      | 17 640 B | 1 960 B | 360 B | 24 | 9.0000 fps |
-| XP      | 19 760 B      | 17 784 B | 1 976 B | 504 B | 12 | 8.9271 fps |
+| Variant | Frame on disc | Video | Audio | Header | Sync words | At 1x CD | Played at |
+|---------|--------------:|------:|------:|-------:|-----------:|---------:|----------:|
+| Color   | 19 600 B      | 17 640 B | 1 960 B | 360 B | 24 | 9.0000 fps | 9.0000 fps (1x, unchecked) |
+| XP      | 19 760 B      | 17 784 B | 1 976 B | 504 B | 12 | 8.9271 fps | 17.8543 fps (2x) |
 
 Both carry the same **144 x 80** picture; XP's improvement was a larger, better screen
 and longer running time, not more pixels. In both cases:
@@ -67,8 +69,9 @@ video bytes = header + 17 280 bytes of packed pixel data
 ```
 
 The frame rate follows from arithmetic rather than being stored anywhere:
-`176 400 / 19 760 = 8.9271 fps` for XP. Audio is the honest master clock — one frame is
-exactly 1976 samples, or 112.018 ms.
+`176 400 / 19 760 = 8.9271 fps` for XP at one-times CD speed, and twice that, 17.8543 fps,
+at the speed the XP reads. Audio is the honest master clock — one frame is exactly 1976
+samples, or 56.009 ms at 35 280 Hz.
 
 ### Finding frames
 
@@ -85,8 +88,9 @@ boundary, but `vxp` searches for the sync word rather than assuming it.
 
 ## Audio (established)
 
-Unsigned 8-bit mono PCM at 17 640 Hz. Silence is `0x80`. There is no compression and no
-in-band control data.
+Unsigned 8-bit mono PCM, 17 640 bytes to a second of disc at one-times CD speed, played
+at 35 280 Hz on the XP. Silence is `0x80`. There is no compression and no in-band control
+data.
 
 > **The XP plays at twice CD speed.** 17 640 Hz is the rate at one-times CD speed, and
 > at that rate the retail XP discs run twice as long as they should: the two cartoon
@@ -96,10 +100,21 @@ in-band control data.
 > could never show this, since a factor of two is exactly one octave: at 35 280 Hz the
 > theme music sits within a few cents of the studio's own uploads, as it did at 17 640.
 > A rate 0.8 % higher (35 568 Hz, an even 18 fps) would put it 14 cents off them, so
-> exactly 2x is preferred. The Color figures below are unchecked against this.
-> `vxp` plays at 35 280 Hz by default, and the rate is the `emulation.discSampleRate`
-> setting (`--rate`) until hardware confirms it. Exports and the durations `vxp info`
-> reports are still at the one-times rate.
+> exactly 2x is preferred.
+>
+> `vxp` keeps the two apart: the stream facts (1976 audio bytes a frame, 17 640 a second
+> of disc at 1x) stay as they are, and a playback rate on top of them
+> (`FrameLayout.PlaybackSampleRate`, the stream rate times the variant's disc speed) is
+> what every time is shown and written in. Running times in `vxp info`, `tracks` and the menus, the
+> position in the overlay, `vxp run` durations and `--max-seconds`, and every WAV that
+> `audio`, `export` and `run --wav` write are at 35 280 Hz for XP, so a WAV plays at the
+> right speed. Live playback answers to the `emulation.discSampleRate` setting (`--rate`),
+> whose default is that same 35 280, so it can be trimmed until hardware confirms it.
+>
+> **Color is unchecked.** There is no Color disc in the corpus, so nothing says whether
+> the Color player reads at 1x or 2x. `vxp` keeps Color at one-times, 17 640 Hz and
+> 9 fps, and scales the live rate setting by the same proportion, until a Color disc
+> shows otherwise.
 
 Note that PVDTools writes its WAV header as two channels; that appears to be a slip, and
 its own header fields are internally inconsistent about it. Sample-to-sample correlation
@@ -168,8 +183,8 @@ stripes.
 
 **240 x 160** appears on Wikipedia for both Color and XP, uncited. The claims around it
 do not survive contact with a real disc: it says the video is compressed (there is no
-codec at all), that it runs at 15 fps (it is `176 400 / 19 760` = 8.93, and 9.00 on
-Color), and that video sits on the left audio channel with sound on the right (it is a
+codec at all), that it runs at 15 fps (it is `176 400 / 19 760` = 8.93 at one-times CD
+speed and 17.85 at the twice CD speed the XP reads at, and 9.00 on Color), and that video sits on the left audio channel with sound on the right (it is a
 9:1 byte interleave, not a stereo split). Its black and white figure — 80 x 80 non-square
 with 16 greys — does match, so the page is not uniformly wrong, but nothing on it should
 be preferred to the disc.
@@ -289,16 +304,21 @@ score bands, with different endings for each branch of the story.
 
 ### Where a segment goes next
 
-When a segment ends, the player takes the first of these that applies:
+A key press takes its branch at once (see [below](#when-a-key-press-takes-effect)).
+When a segment ends with no key pressed, the player takes the first of these that
+applies:
 
-1. The entry the viewer chose, looked up in the frame on screen when the key was
-   pressed.
-2. Register **`0x4F`**, if it names a track. A segment naming itself repeats until the
+1. Register **`0x4F`**, if it names a track. A segment naming itself repeats until the
    viewer acts: Batman track 60 loops until key 3 is pressed, and track 27 until 5 or 6.
-3. The rest of the play list that led here.
-4. On a `TaggedChoice` segment, the score branch.
-5. On a `Choice` segment, whatever the viewer has set for a choice left unanswered.
-6. The next track in disc order.
+2. The rest of the play list that led here.
+3. On a `TaggedChoice` segment, the score branch.
+4. On a `Choice` segment, the segment again: an unanswered question is held until a key
+   is pressed (see [below](#an-unanswered-choice)).
+5. The next track in disc order, passing over blank tracks.
+
+With `emulation.instantChoices` turned off, a press is instead remembered and taken ahead
+of all of these when the segment ends, looked up in the frame on screen when the key was
+pressed.
 
 `0x4F` holds this rule on every track of all six discs. It is constant within every
 track, it is never set on a choice segment, and wherever it is set it names the right
@@ -336,6 +356,63 @@ discs the first track after the episodes and credits (16 on Kids Next Door and
 *Raggedy Android*, 18 on Jimmy Neutron, 19 on *Teen Robot 3*). What reads it is
 not known.
 
+### An unanswered choice
+
+No `Choice` segment names a track in `0x4F`, so what the hardware does when one ends
+unanswered is not written on the disc. What the discs rule out is any automatic answer.
+Taking the first entry, `vxp`'s earlier default, answers every quiz question with key 1,
+makes Batman's `Choice`-kind prompt at track 84 succeed on its own, and sends the episode
+discs' chapter screens (Kids Next Door 19-26, Jimmy Neutron 22-29) cycling for ever,
+since each one's first entry is the next chapter. Carrying on in disc order is no better:
+it walks from a menu into whatever track happens to follow it.
+
+So `vxp` holds. An unanswered `Choice` plays again from its first frame, picture and
+sound together, until a key is pressed, exactly as a segment naming itself in `0x4F`
+already does (Batman 27 and 60). Repeating was preferred to freezing on the last frame
+because that is how the disc's own "wait for a key" segments behave, and because many
+choice segments offer their keys only part of the way through: Batman 84-87 put the
+question up for their last 24-33 frames, and a frozen last frame would leave the viewer
+with nothing on screen to answer. The quiz questions' own key 5, which names the
+question itself (Kids Next Door `5:30` on track 30), is the "ask me again" the hold makes
+automatic.
+
+A `TaggedChoice` asks the viewer nothing, so it is never held; one whose score bands all
+miss carries on in disc order. `emulation.choiceTimeout` (`--choice-timeout`) still
+offers `firstBranch` and `discOrder`.
+
+### When a key press takes effect
+
+The player takes a branch **the moment its key is pressed**, rather than holding the
+press until the segment ends. `vxp` did the latter at first; the discs argue against it
+on four counts.
+
+- **The menu key on the episodes.** Every episode segment on the four linear discs
+  carries the back-to-menu entry in slot 6 on every frame (`6:17` on Kids Next Door),
+  and nearly all of those segments run 2,500 to 4,360 frames, two to four minutes each. Held to the
+  end of the segment, the menu key would answer minutes after it was pressed.
+- **Timed prompts cut from the window, not from the end.** A prompt offers the next
+  scene for about twelve frames and then gives every key to the failure clip for the
+  twelve that close the segment. Across Batman's thirty prompts (tracks 32-42, 62-69,
+  71-81), the first frame of each success clip matches the source most closely at or
+  before the end of its prompt window, never in the closing frames, and on average it is
+  twice as close to that frame as to the segment's last one (mean nibble difference 3.8
+  against 8.0). The success clip is cut to follow the picture where the key is pressed,
+  which only an immediate jump shows.
+- **Entries that name their own segment.** Quiz questions give key 5 to the question
+  itself (Kids Next Door 30-39, *Teen Robot 3* 34-45, Jimmy Neutron 33-42, Teen Titans
+  24-29 and 55-61), and Teen Titans track 23, a 1,905-frame `Choice`, gives key 5 to 23.
+  At the end of the segment that is the same as pressing nothing. On the press, it
+  restarts the question: a replay key.
+- **A window in the middle of a scene.** Teen Titans track 4 offers `3:71` for nine
+  frames, 440-448, of a 1,727-frame scene that has its own timed prompt at 1,704. Held to
+  the end, a press there would be decided some seventy seconds later, after that prompt
+  had come and gone.
+
+Nothing on the discs argues the other way: timed prompts work under either reading,
+because their closing frames send every key to the failure clip. `emulation.instantChoices`
+is on by default, and turning it off restores the deferred behaviour. The `vxp run`
+script keeps both, as `choose N` (at once) and `choice N` (at the end of the segment).
+
 ## Not yet established
 
 These are open questions. `vxp` is deliberately conservative about them.
@@ -345,17 +422,12 @@ chapter screens slot 2 steps forward, slot 4 back, slot 5 plays and slot 6 retur
 the menu, which fits four directions, a select and a menu key. `vxp` maps slots to keys
 1-6 and to the controller's D-pad, X and Y.
 
-**An unanswered choice.** No `Choice` segment names a track in `0x4F`, so what the
-hardware does when one ends unanswered is not on the disc. Taking the first entry, the
-`vxp` default, is plainly wrong in places — it answers every quiz question with key 1
-and makes Batman's `Choice`-kind prompt at track 84 succeed on its own — and the chapter
-screens on the episode discs cycle for ever under it. Repeating the segment until a key
-is pressed fits every case seen, but is not yet what `vxp` does.
+**The hardware itself.** The hold at an unanswered choice and the jump on a key press
+are read from how the discs are cut, not observed on a player. Both fit every case in
+the corpus.
 
-**When a choice is committed.** `vxp` records a keypress and jumps at the end of the
-segment. Timed prompts work either way, since their closing frames send every key to the
-failure clip. Whether the hardware jumps immediately on press has not been determined;
-the menu key on a long episode suggests it does.
+**The Color player's speed.** See [Audio](#audio-established): Color is kept at
+one-times CD speed for want of a disc to check it against.
 
 **Black and white VideoNow.** A different interleave and a 4-bit greyscale 80 x 80
 picture. Detected and reported but not yet decoded.
