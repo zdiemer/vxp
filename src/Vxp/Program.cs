@@ -100,7 +100,7 @@ internal static class Usage
                 --rate HZ          Disc sample rate, 16000 to 40000. Default 35280.
                 --loop MODE        none, track or disc.
                 --navigation MODE  discOrder or followHeader.
-                --choice-timeout M firstBranch, discOrder or wait.
+                --choice-timeout M wait (hold for a key), firstBranch or discOrder.
                 --mute             Start silent.
                 --volume N         Volume, 0 to 100.
                 --no-config        Use defaults; neither read nor write the settings file.
