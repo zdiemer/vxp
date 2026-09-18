@@ -11,6 +11,7 @@ namespace Vxp.Tests;
 /// <param name="Branches">Destination tracks for the branch table, in slot order.</param>
 /// <param name="Title">Cue sheet title.</param>
 /// <param name="Empty">When true the track holds no VideoNow stream, like end-of-disc padding.</param>
+/// <param name="Blank">When true every frame is black and silent, though the stream is valid.</param>
 public sealed record TrackSpec(
     int Number,
     int Frames,
@@ -18,7 +19,8 @@ public sealed record TrackSpec(
     int ContinueTrack = 0,
     int[]? Branches = null,
     string? Title = null,
-    bool Empty = false);
+    bool Empty = false,
+    bool Blank = false);
 
 /// <summary>
 /// Writes a playable VideoNow XP disc image to a temporary directory, so the player can
@@ -121,11 +123,18 @@ public sealed class SyntheticDiscFile : IDisposable
 
         // Stamp the track and frame into the picture so tests can tell frames apart.
         var pixels = new byte[FrameLayout.PixelBytes];
+        var audio = new byte[layout.AudioBytes];
+
+        if (spec.Blank)
+        {
+            Array.Fill(audio, (byte)0x80);
+            return SyntheticDisc.BuildFrame(layout, registers, pixels, audio);
+        }
+
         pixels[0] = (byte)(spec.Number & 0x0F);
         pixels[FrameLayout.PixelRowStride] = (byte)(frameIndex & 0x0F);
 
         // A ramp in the audio makes it obvious which frame a sample came from.
-        var audio = new byte[layout.AudioBytes];
         Array.Fill(audio, (byte)(0x80 + (frameIndex & 0x0F)));
 
         return SyntheticDisc.BuildFrame(layout, registers, pixels, audio);

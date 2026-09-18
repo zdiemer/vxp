@@ -43,6 +43,68 @@ public class PlayerTransportTests
         Assert.Equal(3, player.CurrentTrack);
     }
 
+    /// <summary>
+    /// Batman vs The Joker leaves 24 seconds of black silence (tracks 3 and 4) between the
+    /// title sequence and the first choice, and playing into them looked like a hang.
+    /// </summary>
+    [Fact]
+    public void PlaysOverBlankTracksBetweenTheTitleAndTheFirstScene()
+    {
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 2),
+            new TrackSpec(2, 2, ContinueTrack: 5),
+            new TrackSpec(3, 2, Blank: true),
+            new TrackSpec(4, 3, Blank: true),
+            new TrackSpec(5, 4, SegmentKind.Choice, Branches: [6]),
+            new TrackSpec(6, 2));
+
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+        player.SelectTrack(2);
+        player.Play();
+        RunFrames(player, 3);
+
+        Assert.True(player.IsBlank(3));
+        Assert.True(player.IsBlank(4));
+        Assert.False(player.IsBlank(5));
+        Assert.Equal(5, player.CurrentTrack);
+        Assert.True(player.IsChoicePoint);
+    }
+
+    [Fact]
+    public void SkippingTracksPassesOverBlankOnesButTheyCanStillBeSelected()
+    {
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 2),
+            new TrackSpec(2, 2, Blank: true),
+            new TrackSpec(3, 2));
+
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+
+        player.NextTrack();
+        Assert.Equal(3, player.CurrentTrack);
+
+        player.PreviousTrack();
+        Assert.Equal(1, player.CurrentTrack);
+
+        player.SelectTrack(2);
+        Assert.Equal(2, player.CurrentTrack);
+    }
+
+    [Fact]
+    public void BlankChoiceSegmentsAreStillVisited()
+    {
+        using var disc = SyntheticDiscFile.Create(
+            new TrackSpec(1, 2),
+            new TrackSpec(2, 2, SegmentKind.TaggedChoice, Branches: [3], Blank: true),
+            new TrackSpec(3, 2));
+
+        using var player = new VideoNowPlayer(DiscImage.Open(disc.CuePath));
+        player.NextTrack();
+
+        Assert.False(player.IsBlank(2));
+        Assert.Equal(2, player.CurrentTrack);
+    }
+
     [Fact]
     public void PlaysStraightIntoTheNextTrack()
     {

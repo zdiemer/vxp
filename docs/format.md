@@ -19,6 +19,15 @@ directly to an LCD controller and a DAC.
 - Each disc holds up to 99 tracks. Titles use tracks as the unit of narrative structure:
   one track per scene, and interactive titles cut alternative branches as separate tracks.
 - A trailing `fill` track usually pads out the disc and contains no video stream.
+- Some tracks carry a valid stream in which **every frame is blank**: all-zero pixels
+  (black) and audio pinned at `0x80` (silence), under an ordinary `Linear` header. On
+  *Batman vs The Joker* tracks 3 and 4 are 24 seconds of this, sitting between the title
+  sequence and the first choice, and the title's register `0x4F` names track 5 — the
+  disc's own pointer steps over them. Played in disc order they look like a hang, so
+  `vxp` passes over them in disc order and track skipping as it does fill, and still
+  plays one if it is selected directly. Blank segments that offer a choice (Batman
+  tracks 22 and 23) or redirect are not skipped. Tracks that are black but carry sound,
+  such as Teen Titans track 2, are content and are not skipped either.
 
 Ripping tools produce a cue sheet plus either one `.bin` per track or a single `.bin`.
 `vxp` handles both. The cue sheet's `TITLE` fields often preserve the mastering source
@@ -225,6 +234,10 @@ These are open questions. `vxp` is deliberately conservative about them.
 one value — tracks 32-42 all name 48, tracks 62-69 all name 70, tracks 71-81 all name 83
 — and the named track sometimes points back into the group. That is consistent with a
 "continue here after this group" pointer, and also with a chapter or hub identifier.
+On every disc examined the title sequence (track 2) sets it: to the first scene on the
+interactive titles (Batman names 5, past its blank tracks 3 and 4) and to the episode
+menu on the linear ones (a choice segment after the episodes). Two Batman tracks (27 and
+60) name themselves.
 Treating it as an unconditional next-track pointer would skip large stretches of a disc
 in linear playback, so `vxp` ignores it by default and honours it only for `Hub` and
 `Restart` segments. `--follow-header` enables the aggressive reading for experimentation.

@@ -83,6 +83,7 @@ public sealed class VideoNowPlayer : IDisposable
 
     private readonly DiscImage _disc;
     private readonly Dictionary<int, TrackReader> _readers = new();
+    private readonly Dictionary<int, bool> _blank = new();
     private readonly List<int> _history = new();
     private readonly object _gate = new();
 
@@ -606,8 +607,51 @@ public sealed class VideoNowPlayer : IDisposable
     /// <summary>True if the track carries a VideoNow stream rather than padding.</summary>
     public bool IsPlayable(int trackNumber) => GetReader(trackNumber)?.FrameCount > 0;
 
+    /// <summary>
+    /// True for a plain linear segment in which no frame carries any picture or sound.
+    /// </summary>
+    /// <remarks>
+    /// Mastering leaves these between the title sequence and the first real segment: on
+    /// <i>Batman vs The Joker</i> tracks 3 and 4 are 24 seconds of black silence, and the
+    /// title's own register 0x4F steps straight over them to track 5. Disc order and track
+    /// skipping pass over them as they pass over fill; selecting one directly still plays it.
+    /// </remarks>
+    public bool IsBlank(int trackNumber)
+    {
+        if (_blank.TryGetValue(trackNumber, out var blank)) return blank;
+
+        blank = ScanForBlank(GetReader(trackNumber));
+        _blank[trackNumber] = blank;
+        return blank;
+    }
+
+    private static bool ScanForBlank(TrackReader? reader)
+    {
+        if (reader is null || reader.FrameCount == 0) return false;
+
+        for (var i = 0; i < reader.FrameCount; i++)
+        {
+            var frame = reader.ReadFrame(i);
+            if (frame is null) return false;
+
+            // Anything that redirects or offers a choice matters even with nothing to show.
+            if (i == 0 && frame.ReadHeader().Kind != SegmentKind.Linear) return false;
+
+            if (frame.PixelData.ContainsAnyExcept((byte)0x00)) return false;
+            if (frame.Audio.AsSpan().ContainsAnyExcept((byte)0x80)) return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>True if disc order and track skipping should stop at this track.</summary>
+    private bool IsWorthVisiting(int trackNumber) => IsPlayable(trackNumber) && !IsBlank(trackNumber);
+
     private int FirstPlayableTrack()
     {
+        foreach (var track in _disc.Tracks)
+            if (IsWorthVisiting(track.Number)) return track.Number;
+
         foreach (var track in _disc.Tracks)
             if (IsPlayable(track.Number)) return track.Number;
 
@@ -628,7 +672,7 @@ public sealed class VideoNowPlayer : IDisposable
         if (index < 0) return null;
 
         for (var i = index + 1; i < _disc.Tracks.Count; i++)
-            if (IsPlayable(_disc.Tracks[i].Number)) return _disc.Tracks[i].Number;
+            if (IsWorthVisiting(_disc.Tracks[i].Number)) return _disc.Tracks[i].Number;
 
         return null;
     }
@@ -639,7 +683,7 @@ public sealed class VideoNowPlayer : IDisposable
         if (index < 0) return null;
 
         for (var i = index - 1; i >= 0; i--)
-            if (IsPlayable(_disc.Tracks[i].Number)) return _disc.Tracks[i].Number;
+            if (IsWorthVisiting(_disc.Tracks[i].Number)) return _disc.Tracks[i].Number;
 
         return null;
     }
